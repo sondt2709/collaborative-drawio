@@ -1,0 +1,18 @@
+.DS_Store
+
+# Local files: evidence, demos, spikes, private lists. Never commit.
+tmp/
+
+# Agent tool state (keep shared skills)
+.claude/*
+!.claude/skills/
+
+# Dependencies and build output
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.*

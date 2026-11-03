@@ -1,0 +1,14 @@
+schema: spec-driven
+
+context: |
+  dgm: a Node.js (TypeScript) command line tool. An AI agent and a person edit the same draw.io diagram.
+  The .drawio file is the only source of truth. The agent writes short YAML; dgm writes draw.io XML.
+  The repository is public: examples, fixtures and specs must be synthetic (for example "order service",
+  "Postgres"). Never include local machine paths, employer, client or private project names.
+  draw.io facts and style rules are in CLAUDE.md.
+
+rules:
+  proposal:
+    - Use the ASD-STE100 writing style: short sentences, active voice, one term for one concept.
+  tasks:
+    - Each task has a verifiable result (a test, a command output or a file).

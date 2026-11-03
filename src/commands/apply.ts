@@ -7,7 +7,7 @@ import type { DrawioDoc, Geometry } from '../model/doc.js';
 import { fromHtmlLabel, toHtmlLabel } from '../model/text.js';
 import { serializeOverride } from '../theme/render.js';
 import type { NodeKind, Theme } from '../theme/theme.js';
-import { pending, personRoutes, record, snapshot, summarize, type PersonRoute } from '../track/track.js';
+import { pending, personLabels, personRoutes, record, snapshot, summarize, type PersonRoute } from '../track/track.js';
 import { portFromFraction } from '../route/route.js';
 import { loadDiagram, plural, readInput, specToLNode, writeDoc, type IO } from './common.js';
 
@@ -27,7 +27,7 @@ function flatten(n: NodeSpec): NodeSpec[] {
  * connect, move, remove. Throws a ValidationError (and the caller writes
  * nothing) when one operation is invalid.
  */
-export function executeApply(doc: DrawioDoc, theme: Theme, ops: ApplySpec, opts: { personRoutes?: Map<string, PersonRoute> } = {}): ApplyResult {
+export function executeApply(doc: DrawioDoc, theme: Theme, ops: ApplySpec, opts: { personRoutes?: Map<string, PersonRoute>; personLabels?: Set<string> } = {}): ApplyResult {
   const ed = new Editor(doc, theme);
   const problems: string[] = [];
   const bad = (path: string, msg: string) => problems.push(`${path}: ${msg}`);
@@ -330,7 +330,7 @@ export function executeApply(doc: DrawioDoc, theme: Theme, ops: ApplySpec, opts:
 
   // ---- style rules and routes
   const grouped = ed.groupText();
-  ed.routeAll({ force: touchedEdges });
+  ed.routeAll({ force: touchedEdges, keepLabels: opts.personLabels });
   refresh();
 
   // ---- overlaps after zone growth
@@ -404,7 +404,7 @@ export async function apply(io: IO, file: string, opts: { from?: string }): Prom
   const { path, doc, theme } = loadDiagram(io, file);
   const ops = parseApply(readYaml(await readInput(io, opts.from)), theme);
   const human = pending(path, doc);
-  const res = executeApply(doc, theme, ops, { personRoutes: personRoutes(path, doc) });
+  const res = executeApply(doc, theme, ops, { personRoutes: personRoutes(path, doc), personLabels: personLabels(path, doc) });
   if (human && human.diff.lines.length) record(path, 'human', human.snap, summarize(human.diff));
   writeDoc(path, doc);
   const entry = record(path, 'agent', snapshot(doc), `apply: ${res.lines.filter((l) => !l.endsWith('kept in place')).join('; ') || 'no change'}`);

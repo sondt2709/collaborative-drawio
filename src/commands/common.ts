@@ -14,6 +14,10 @@ export interface IO {
   stdin: () => Promise<string | undefined>;
   out: (line: string) => void;
   err: (line: string) => void;
+  /** Start a program without waiting (tests record the call). Default: a detached process. */
+  launch?: (cmd: string, args: string[]) => void;
+  /** The current time (tests set it). */
+  now?: () => Date;
 }
 
 export function abs(io: IO, file: string): string {

@@ -48,7 +48,7 @@ When an AI agent edits draw.io files directly, these problems occur:
 
 ## Install
 
-You need Node.js 22 or later. For `dgm render`, you also need the [draw.io desktop app](https://github.com/jgraph/drawio-desktop/releases).
+You need Node.js 22 or later. For `dgm open`, `dgm export` and `dgm render`, you also need the [draw.io desktop app](https://github.com/jgraph/drawio-desktop/releases).
 
 Install the npm package [`collaborative-drawio`](https://www.npmjs.com/package/collaborative-drawio). It gives the `dgm` command:
 
@@ -77,7 +77,7 @@ To remove it, delete `.claude/skills/dgm/` and the `dgm hook run` entry in `.cla
 ## Quick start
 
 ```sh
-dgm create docs/arch.drawio --from examples/order-system.yaml
+dgm create docs/arch.drawio --from examples/order-system.yaml   # also opens it in draw.io
 dgm show docs/arch.drawio            # the diagram as YAML, without colors or positions
 dgm apply docs/arch.drawio <<'EOF'
 add:
@@ -87,27 +87,36 @@ connect:
 EOF
 # Now edit the diagram in draw.io and save it.
 dgm status docs/arch.drawio          # your changes since the last snapshot
-dgm render docs/arch.drawio --theme dark
+dgm export docs/arch.drawio          # a light PNG in ~/Downloads, to share
 ```
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `dgm create <file> [--from <yaml>] [--force]` | Write a new diagram from YAML (standard input or `--from`) |
+| `dgm create <file> [--from <yaml>] [--force] [--no-open]` | Write a new diagram from YAML (standard input or `--from`), then open it in draw.io desktop |
 | `dgm apply <file> [--from <yaml>]` | Change a diagram: `add`, `set`, `connect`, `move`, `remove` |
 | `dgm show <file> [--geometry]` | Print the diagram as YAML in the create format |
 | `dgm status <file> [--ack]` | Print the changes since the last snapshot; `--ack` records them as one human entry |
 | `dgm log <file>` | List the history, newest first |
 | `dgm layout <file> [--keep-moved]` | Place all nodes again; `--keep-moved` keeps nodes that you moved |
 | `dgm check <file>` | Report raw colors and text with low contrast, in light and dark mode |
-| `dgm render <file> [--theme light\|dark] [--format png\|svg] [--scale <n>] [--out <path>]` | Export through the draw.io desktop CLI |
+| `dgm open <file>` | Open a diagram in draw.io desktop |
+| `dgm export <file> [--theme light\|dark] [--format png\|svg] [--scale <n>] [--out <path>]` | Export to share: light PNG, 20 px border, scale 2, to `~/Downloads/<repo>.<diagram>.<yyyyMMdd-HHmm>.png` (`-1`, `-2` when the name exists) |
+| `dgm render <file> [--theme light\|dark] [--format png\|svg] [--scale <n>] [--out <path>]` | Export next to the file (`<file>.<theme>.<format>`), for the agent to look at |
+| `dgm help [yaml\|edges\|apply]` | Print the commands, or the reference of a topic |
 | `dgm setup [<dir>]` | Install the Claude Code skill and hook in a project |
 | `dgm hook run` | The hook entry point |
 
 Exit codes: 0 success, 1 check problems, 2 invalid input (no file is changed), 3 draw.io not found or export failed.
 
-`dgm render` finds draw.io in this order: the `DGM_DRAWIO` environment variable, `drawio` on the `PATH`, then `/Applications/draw.io.app` on macOS.
+`dgm` finds draw.io in this order: the `DGM_DRAWIO` environment variable, `drawio` on the `PATH`, then `/Applications/draw.io.app` on macOS.
+
+| Environment variable | Effect |
+|---|---|
+| `DGM_NO_OPEN=1` | `dgm create` does not open draw.io |
+| `DGM_EXPORT_DIR` | The folder for `dgm export` (default `~/Downloads`) |
+| `DGM_DRAWIO` | The draw.io binary |
 
 ## YAML format
 
@@ -153,6 +162,8 @@ Edges are straight lines by default. A line is exactly horizontal or vertical wh
 
 `dgm` stores this intent in the edge and computes the points again when a box moves. When you drag the points of a line in draw.io, `dgm` keeps them.
 
+Edge labels: `dgm` puts each label on a free part of its line, or beside the line, so that it does not cover a box. `dgm create` and `dgm layout` make the gap between two boxes wide enough for the label of the line between them. `dgm check` reports a label that still covers a box. When you drag a label in draw.io, `dgm` keeps its position.
+
 To compose a large diagram, give rows of ids, for the page or for a zone. A list inside a row is a column. Zones in one row get the same height:
 
 ```yaml
@@ -179,7 +190,7 @@ move:    {cache: {in: page}}
 remove:  [queue, "web -> api"]
 ```
 
-The skill in [`skill/SKILL.md`](skill/SKILL.md) is the full reference for agents.
+The skill in [`skill/SKILL.md`](skill/SKILL.md) gives agents the rules and a short reference. `dgm help yaml`, `dgm help edges` and `dgm help apply` print the full reference.
 
 ## Themes
 
@@ -203,7 +214,7 @@ Style rules in the theme (`rules`):
 ## Limits
 
 - `dgm` changes the first page only. It keeps all other pages unchanged.
-- `dgm check` gives hints (a line through a box, an almost straight line, line crossings, text that floats over a zone). The agent fixes them with another order, ports or `via`. Hints do not change the exit code.
+- `dgm check` gives hints (a line through a box, an almost straight line, line crossings, a label that covers a box, text that floats over a zone). The agent fixes them with another order, ports or `via`. Hints do not change the exit code.
 - After you move a box in draw.io, its lines keep their old points until the next `dgm apply` or `dgm layout`.
 - `dgm` cannot see edits that you did not save. Save in draw.io before you ask the agent for a change.
 - When the agent changes the style of a node, your own style edits on that node are replaced by the theme style.

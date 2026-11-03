@@ -6,10 +6,10 @@ import { byId, dgm, drawioSave, read, tmpDir, write, SMALL } from './helpers.js'
 const ROOT = join(import.meta.dirname, '..');
 
 describe('skill', () => {
-  it('has fewer than 6,000 characters and names the rules', () => {
+  it('has fewer than 4,500 characters and names the rules', () => {
     const s = readFileSync(join(ROOT, 'skill/SKILL.md'), 'utf8');
-    expect(s.length).toBeLessThan(6000);
-    for (const w of ['dgm show', 'dgm create', 'dgm apply', 'Never read or write `.drawio` XML', 'Never write colors', 'tones:', 'kinds:', 'variants:', 'edge kinds:']) {
+    expect(s.length).toBeLessThan(4500);
+    for (const w of ['dgm show', 'dgm create', 'dgm apply', 'Do not read or write `.drawio` XML', 'Do not write colors', 'Keep edge labels short', 'dgm export', 'dgm help', 'tones:', 'kinds:', 'variants:', 'edge kinds:']) {
       expect(s).toContain(w);
     }
   });

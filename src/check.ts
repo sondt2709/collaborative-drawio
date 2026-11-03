@@ -1,10 +1,13 @@
-import { A, absBoxes, floatingTexts, obstacles, readView } from './diagram.js';
-import { borderPoint, contains, crossedBoxes, segmentsCross, type Pt } from './route/geom.js';
+import { A, absBoxes, edgeLines, floatingTexts, obstacles, readView } from './diagram.js';
+import { labelBoxOf } from './route/label.js';
+import { contains, crossedBoxes, segmentsCross, type Pt } from './route/geom.js';
 import type { Cell, DrawioDoc } from './model/doc.js';
 import { fromHtmlLabel } from './model/text.js';
 import { getStyle, hasBase, parseStyle } from './model/style.js';
 import { contrast, invertLightness, isRawColor, namedToHex, parseLightDark } from './theme/color.js';
 import type { Theme } from './theme/theme.js';
+
+export { edgeLines };
 
 export interface Problem {
   id: string;
@@ -85,33 +88,6 @@ function ownerName(doc: DrawioDoc, c: Cell, byId: Map<string, Cell>): string {
   return c.id;
 }
 
-/** The page polyline of each edge whose path dgm can know (not draw.io's orthogonal or elbow styles). */
-export function edgeLines(doc: DrawioDoc): Array<{ ref: string; from: string; to: string; line: Pt[] }> {
-  const view = readView(doc);
-  const boxes = absBoxes(doc);
-  const out: Array<{ ref: string; from: string; to: string; line: Pt[] }> = [];
-  for (const e of view.edges) {
-    const a = boxes.get(e.from);
-    const b = boxes.get(e.to);
-    if (!a || !b || e.from === e.to) continue;
-    const st = doc.style(e.cell);
-    const es = getStyle(st, 'edgeStyle');
-    if (es && es !== 'none') continue;
-    const parent = doc.parentId(e.cell);
-    const off = parent ? boxes.get(parent) : undefined;
-    const pts: Pt[] = e.points.map(([x, y]) => [x + (off?.x ?? 0), y + (off?.y ?? 0)]);
-    const port = (box: typeof a, px: string | undefined, py: string | undefined): Pt | undefined =>
-      px !== undefined && py !== undefined ? [box.x + Number(px) * box.w, box.y + Number(py) * box.h] : undefined;
-    const c = (box: typeof a): Pt => [box.x + box.w / 2, box.y + box.h / 2];
-    const p1 = port(b, getStyle(st, 'entryX'), getStyle(st, 'entryY'));
-    let p0 = port(a, getStyle(st, 'exitX'), getStyle(st, 'exitY'));
-    p0 ??= borderPoint(a, pts[0] ?? p1 ?? c(b));
-    const end = p1 ?? borderPoint(b, pts[pts.length - 1] ?? p0);
-    out.push({ ref: e.ref, from: e.from, to: e.to, line: [p0, ...pts, end] });
-  }
-  return out;
-}
-
 /** Layout hints: lines through boxes, almost straight lines, line crossings, floating text. They do not change the exit code. */
 export function layoutHints(doc: DrawioDoc, theme: Theme): string[] {
   const view = readView(doc);
@@ -146,6 +122,15 @@ export function layoutHints(doc: DrawioDoc, theme: Theme): string[] {
     }
   }
   if (crossings) hints.push(`hint: ${crossings} line crossing${crossings > 1 ? 's' : ''}`);
+  for (const l of lines) {
+    const e = view.edges.find((x) => x.id === l.id);
+    const text = e && fromHtmlLabel(doc.label(e.cell));
+    if (!e || !text) continue;
+    const pos = doc.edgeLabelPos(e.cell);
+    const b = labelBoxOf(l.line, text, pos.x, pos.offset);
+    const on = obs.filter((o) => b.x < o.box.x + o.box.w && o.box.x < b.x + b.w && b.y < o.box.y + o.box.h && o.box.y < b.y + b.h).map((o) => o.id);
+    if (on.length) hints.push(`hint: label ${JSON.stringify(text)} of edge ${l.ref} overlaps ${on.join(', ')}. Shorten the label, or run dgm layout`);
+  }
   for (const [t, z] of floatingTexts(doc, view)) hints.push(`hint: text ${t} sits on zone ${z} but is not part of it (dgm apply moves it into the zone)`);
   return hints;
 }

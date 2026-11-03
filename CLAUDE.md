@@ -68,19 +68,19 @@ The render test in `tests/examples.test.ts` runs only when the draw.io desktop a
   - Edges are named `from -> to` (`#2` for a second edge), not by cell id. The intent of an edge is in `dgm_from_port`, `dgm_to_port`, `dgm_via` and `dgm_route`; the points are computed from it.
 - `src/theme/`: theme files (`themes/*.yaml`, lookup: `.dgm/themes/`, `~/.config/dgm/themes/`, package) and one render function for each kind. All colors go through `ld()`.
 - `src/icons/`: Lucide icon nodes to draw.io stencil XML, compressed as draw.io does.
-- `src/route/`: edge routing. `route.ts` turns ports and `via` items into points (lines on one side are spread out). The default route is straight, exactly horizontal or vertical when the boxes overlap, with a detour when the line would cross a box: simple shapes first, then an A* search on a grid of box borders (`grid.ts`). `geom.ts` has the crossing tests that `dgm check` also uses.
+- `src/route/`: edge routing. `route.ts` turns ports and `via` items into points (lines on one side are spread out). The default route is straight, exactly horizontal or vertical when the boxes overlap, with a detour when the line would cross a box: simple shapes first, then an A* search on a grid of box borders (`grid.ts`). `geom.ts` has the crossing tests that `dgm check` also uses. `label.ts` places edge labels on a free part of the line (geometry `x` along the path and an `offset` point); `create` and `layout` widen `rows` gaps and the elk layer gap (direction right) for labels.
 - `src/dsl/parse.ts`: YAML parsing and validation. Errors name the YAML path.
 - `src/layout/`: text width table, elkjs layered layout (`INCLUDE_CHILDREN`) that aligns connected boxes also inside zones, rows for chips, notes and boxes without edges, placement of new nodes. A container with `rows` (page or zone) or with a band child is laid out alone, bottom-up first (`precompute`), and is one fixed box for the outer layout. Edges with `layout: false` are not given to elk.
-- `src/track/track.ts`: snapshots, the diff and the log in `.dgm/<file-name>/`.
+- `src/track/track.ts`: snapshots, the diff and the log in `.dgm/<file-name>/`. The snapshot keeps the label position (`lbl`), so a label that a person dragged stays (`personLabels`).
 - `src/check.ts`: raw colors and contrast in light and dark mode.
-- `src/commands/`: one file for each command. `setup.ts` also has the hook.
-- `skill/SKILL.md`: the agent skill that `dgm setup` copies. Keep it below 6,000 characters (a test checks this).
+- `src/commands/`: one file for each command. `setup.ts` also has the hook. `create` opens the file in draw.io (`open.ts`; tests set `DGM_NO_OPEN=1`). `export.ts` writes the share PNG to `~/Downloads`.
+- `skill/SKILL.md`: the agent skill that `dgm setup` copies. Write it in ASD-STE100 and keep it below 4,500 characters (a test checks this). The full reference is in `skill/reference/*.md`, printed by `dgm help <topic>`.
 
 Rules for changes:
 - `apply` never moves an existing node, except zone growth and an explicit `at`.
 - Output must be deterministic: the same YAML gives a byte-identical file. Do not write times, random ids or machine data into `.drawio` files.
 - Write each change as a short line for the agent. Do not print XML.
-- Never overwrite the points of a line that a person dragged (`personRoutes` in `src/track/track.ts`).
+- Never overwrite the points or the label position of a line that a person dragged (`personRoutes` and `personLabels` in `src/track/track.ts`).
 - elkjs 0.12 swaps the two values of `elk.nodeSize.minimum` when the direction is DOWN. `src/layout/layout.ts` works around it; keep the test.
 
 ## draw.io facts (verified with draw.io 32.4.1)

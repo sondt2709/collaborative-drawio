@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { readView } from '../diagram.js';
-import type { DrawioDoc } from '../model/doc.js';
+import type { Cell, DrawioDoc } from '../model/doc.js';
 import { styleMap } from '../model/style.js';
 import { serializeOverride } from '../theme/render.js';
 
@@ -32,6 +32,8 @@ export interface SEdge {
   pts?: Array<[number, number]>;
   /** Fixed ends: "exitX,exitY>entryX,entryY". */
   ends?: string;
+  /** Label position: geometry x, y, offset x, offset y. Missing: all 0. */
+  lbl?: [number, number, number, number];
   s: Record<string, string>;
 }
 
@@ -64,6 +66,17 @@ function hashStyle(style: string, edge: boolean): Record<string, string> {
 
 const round = (n: number) => Math.round(n);
 
+function labelPos(doc: DrawioDoc, c: Cell): [number, number, number, number] {
+  const p = doc.edgeLabelPos(c);
+  return [Math.round(p.x * 100) / 100, round(p.y), round(p.offset[0]), round(p.offset[1])];
+}
+
+function sameLabel(a: SEdge['lbl'], b: SEdge['lbl']): boolean {
+  const x = a ?? [0, 0, 0, 0];
+  const y = b ?? [0, 0, 0, 0];
+  return Math.abs(x[0] - y[0]) <= 0.01 && x.slice(1).every((v, i) => Math.abs(v - y[i + 1]) <= 1);
+}
+
 export function snapshot(doc: DrawioDoc): Snapshot {
   const v = readView(doc);
   const snap: Snapshot = { nodes: {}, edges: {} };
@@ -94,6 +107,8 @@ export function snapshot(doc: DrawioDoc): Snapshot {
     if (e.points.length) s.pts = e.points.map(([x, y]) => [round(x), round(y)]);
     const ends = endsOf(doc.style(e.cell));
     if (ends) s.ends = ends;
+    const lbl = labelPos(doc, e.cell);
+    if (lbl.some((v) => v !== 0)) s.lbl = lbl;
     snap.edges[e.id] = s;
   }
   return snap;
@@ -205,6 +220,10 @@ export function diff(a: Snapshot, b: Snapshot): Diff {
       push(`~ edge ${e.ref} route changed in draw.io`);
       changed = true;
     }
+    if (o.from === e.from && o.to === e.to && !sameLabel(o.lbl, e.lbl)) {
+      push(`~ edge ${e.ref} label moved in draw.io`);
+      changed = true;
+    }
     const keys = styleKeysChanged(o.s, e.s);
     if (keys.length && o.kind === e.kind && o.variant === e.variant) {
       push(`~ edge ${e.ref} style: ${keys.join(', ')}`);
@@ -259,6 +278,19 @@ export function personRoutes(file: string, doc: DrawioDoc): Map<string, PersonRo
     const pair = (a: string, b: string): [number, number] | undefined =>
       m.get(a) !== undefined && m.get(b) !== undefined ? [Number(m.get(a)), Number(m.get(b))] : undefined;
     out.set(e.id, { points: e.points, exit: pair('exitX', 'exitY'), entry: pair('entryX', 'entryY') });
+  }
+  return out;
+}
+
+/** Edges whose label position differs from the last agent snapshot: a person dragged the label. */
+export function personLabels(file: string, doc: DrawioDoc): Set<string> {
+  const out = new Set<string>();
+  const last = lastSnapshot(file, 'agent');
+  if (!last) return out;
+  for (const e of readView(doc).edges) {
+    const o = last.edges[e.id];
+    if (!o || !e.label) continue;
+    if (!sameLabel(o.lbl, labelPos(doc, e.cell))) out.add(e.id);
   }
   return out;
 }

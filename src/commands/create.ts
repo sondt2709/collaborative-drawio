@@ -5,6 +5,7 @@ import { A, Editor } from '../diagram.js';
 import { parseDiagram, readYaml, themeNameOf, type DiagramSpec, type NodeSpec } from '../dsl/parse.js';
 import { DgmError, EXIT } from '../errors.js';
 import { layoutDiagram } from '../layout/layout.js';
+import { openAfterWrite } from './open.js';
 import { DrawioDoc } from '../model/doc.js';
 import { loadTheme, type Theme } from '../theme/theme.js';
 import { record, snapshot } from '../track/track.js';
@@ -39,7 +40,7 @@ export async function buildDiagram(spec: DiagramSpec, theme: Theme, pageName: st
   return doc;
 }
 
-export async function create(io: IO, file: string, opts: { force?: boolean; from?: string }): Promise<number> {
+export async function create(io: IO, file: string, opts: { force?: boolean; from?: string; noOpen?: boolean }): Promise<number> {
   const path = abs(io, file);
   const raw = readYaml(await readInput(io, opts.from));
   const theme = loadTheme(themeNameOf(raw), path, io.env);
@@ -52,5 +53,6 @@ export async function create(io: IO, file: string, opts: { force?: boolean; from
   io.out(`${file}: ${plural(count(spec.nodes), 'node')}, ${plural(spec.edges.length, 'edge')}, theme ${theme.name} (${entry.id})`);
   const problems = checkDoc(doc, theme);
   for (const l of formatCheck(problems, layoutHints(doc, theme))) io.out(l);
+  openAfterWrite(io, file, opts.noOpen);
   return problems.length ? EXIT.problems : EXIT.ok;
 }

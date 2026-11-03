@@ -2,7 +2,7 @@ import { checkDoc, formatCheck, layoutHints } from '../check.js';
 import { Editor, type DiagramView, type NodeInfo } from '../diagram.js';
 import { EXIT } from '../errors.js';
 import { layoutDiagram, type LNode } from '../layout/layout.js';
-import { ackHuman, agentPlacements, personRoutes, record, snapshot } from '../track/track.js';
+import { ackHuman, agentPlacements, personLabels, personRoutes, record, snapshot } from '../track/track.js';
 import { keepPersonRoutes } from './apply.js';
 import { loadDiagram, plural, writeDoc, type IO } from './common.js';
 
@@ -37,6 +37,7 @@ export function viewToLNodes(view: DiagramView, keep: Set<string>): LNode[] {
 export async function layout(io: IO, file: string, opts: { keepMoved?: boolean }): Promise<number> {
   const { path, doc, theme, view } = loadDiagram(io, file);
   const routes = personRoutes(path, doc);
+  const labels = personLabels(path, doc);
   const human = ackHuman(path, doc);
   if (human) io.out(`recorded human changes: ${human.lines.length} line${human.lines.length > 1 ? 's' : ''}`);
   const keep = new Set<string>();
@@ -73,7 +74,7 @@ export async function layout(io: IO, file: string, opts: { keepMoved?: boolean }
   ed.setTitles(view.title, view.subtitle, res.title, res.subtitle);
   const grouped = ed.groupText();
   const kept = keepPersonRoutes(doc, ed, routes);
-  ed.routeAll({ includeLegacy: true });
+  ed.routeAll({ includeLegacy: true, keepLabels: labels });
   writeDoc(path, doc);
   const entry = record(path, 'agent', snapshot(doc), `layout: ${plural(moved, 'node')} placed again${keep.size ? `, ${keep.size} kept` : ''}`);
   io.out(`${file}: ${plural(moved, 'node')} placed again${keep.size ? `, ${plural(keep.size, 'moved node')} kept: ${[...keep].join(', ')}` : ''} (${entry.id})`);

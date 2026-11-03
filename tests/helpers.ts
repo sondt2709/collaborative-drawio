@@ -23,7 +23,7 @@ export async function dgm(cwd: string, args: string[], stdin?: string, env: Node
   const err: string[] = [];
   const io: IO = {
     cwd,
-    env: { PATH: process.env.PATH, DGM_CONFIG_DIR: CONFIG, ...env },
+    env: { PATH: process.env.PATH, DGM_CONFIG_DIR: CONFIG, DGM_NO_OPEN: '1', ...env },
     stdin: async () => stdin,
     out: (l) => out.push(l),
     err: (l) => err.push(l),

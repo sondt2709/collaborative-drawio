@@ -81,7 +81,8 @@ jobs:
         run: npm install -g npm@11.9.0
 
       # Runs after semantic-release, so a failed publish leaves a GitHub release
-      # whose tarball can be published by hand.
+      # whose tarball can be published by hand. The "./" is needed: npm reads
+      # "release/x.tgz" as the GitHub repository release/x.tgz.
       - name: Publish to npm
         if: steps.version.outputs.next != ''
-        run: npm publish "release/collaborative-drawio-${{ steps.version.outputs.next }}.tgz" --access public
+        run: npm publish "./release/collaborative-drawio-${{ steps.version.outputs.next }}.tgz" --access public

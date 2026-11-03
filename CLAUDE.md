@@ -6,7 +6,7 @@ This file gives guidance to Claude Code (claude.ai/code) when it works with code
 
 `dgm` is a command line tool for AI agents and people who edit the same draw.io diagram. The agent writes short YAML. The tool writes the draw.io XML, applies the theme, keeps the history, and reports the changes that a person made in the draw.io app. See `README.md` for the workflow.
 
-Status: design stage. No code exists yet.
+Status: first version (OpenSpec change `add-dgm-cli`).
 
 ## Open source rules (IMPORTANT)
 
@@ -37,16 +37,39 @@ Put evidence, demos, spikes, screenshots and other local files in `./tmp`. Git i
 ## Commands
 
 ```sh
-scripts/scan-sensitive.sh          # scan the working tree for sensitive data
+npm ci                     # install
+npm run build              # compile to dist/ (bin: dist/cli.js)
+npm test                   # vitest, all tests in tests/
+npm run typecheck          # tsc on src/ and tests/
+npm run dev -- <command>   # run the CLI from src/ with tsx
+scripts/scan-sensitive.sh  # scan the working tree for sensitive data
 git config core.hooksPath .githooks   # enable the pre-push scan (one time per clone)
 ```
 
-## Architecture (planned)
+The render test in `tests/examples.test.ts` runs only when the draw.io desktop app is installed. CI runs on Ubuntu without it.
 
-- `dgm` is a Node.js CLI. One core library does the work. A Claude Code skill and a `UserPromptSubmit` hook call the CLI.
-- The `.drawio` file is the only source of truth. `dgm` stores a snapshot for each agent turn in a `.dgm/` folder next to the file.
-- Each cell keeps its semantic data (kind, tone, icon, title, subtitle) as draw.io cell attributes. `dgm` makes the style string from this data and the theme.
-- `dgm` uses the installed draw.io desktop CLI for layout and PNG export.
+## Architecture
+
+- `src/cli.ts`: argument parsing (`node:util` parseArgs), the command list and the exit codes (0 ok, 1 check problems, 2 invalid input, 3 draw.io). `run(argv, io)` is used in tests, so tests run in-process.
+- `src/model/`: the draw.io file (`@xmldom/xmldom`). It reads plain and compressed pages, works on the first page only, and keeps the XML of all other cells and pages.
+- `src/diagram.ts`: the semantic view (`readView`) and the `Editor` that writes nodes, helper cells and edges.
+  - Semantic data is in `object` attributes: `dgm_kind`, `dgm_tone`, `dgm_icon`, `dgm_variant`, `dgm_style`. The cell id is the node id. The title is the cell label.
+  - Helper cells have `dgm_role` (`sub`, `icon`, `badge`, `title`, `subtitle`) and ids such as `<id>.sub`. The subtitle text is only in the `<id>.sub` cell.
+  - The theme name and direction are attributes of the root cell `0`.
+  - Edges are named `from -> to` (`#2` for a second edge), not by cell id.
+- `src/theme/`: theme files (`themes/*.yaml`, lookup: `.dgm/themes/`, `~/.config/dgm/themes/`, package) and one render function for each kind. All colors go through `ld()`.
+- `src/icons/`: Lucide icon nodes to draw.io stencil XML, compressed as draw.io does.
+- `src/dsl/parse.ts`: YAML parsing and validation. Errors name the YAML path.
+- `src/layout/`: text width table, rows inside zones, elkjs layered layout for the page, placement of new nodes.
+- `src/track/track.ts`: snapshots, the diff and the log in `.dgm/<file-name>/`.
+- `src/check.ts`: raw colors and contrast in light and dark mode.
+- `src/commands/`: one file for each command. `setup.ts` also has the hook.
+- `skill/SKILL.md`: the agent skill that `dgm setup` copies. Keep it below 6,000 characters (a test checks this).
+
+Rules for changes:
+- `apply` never moves an existing node, except zone growth and an explicit `at`.
+- Output must be deterministic: the same YAML gives a byte-identical file. Do not write times, random ids or machine data into `.drawio` files.
+- Write each change as a short line for the agent. Do not print XML.
 
 ## draw.io facts (verified with draw.io 32.4.1)
 

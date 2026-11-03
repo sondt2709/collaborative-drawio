@@ -1,0 +1,27 @@
+# Synthetic example: a small order system.
+title: Order system
+subtitle: A web shop sends orders to an order service. A worker charges the card.
+nodes:
+  web: {title: Web shop, sub: Storefront for customers, icon: monitor, tone: sky}
+  api: {title: API gateway, sub: Routes and auth, icon: shield, tone: indigo}
+  core:
+    kind: zone
+    title: Order services
+    tone: violet
+    nodes:
+      svc: {title: Order service, sub: Creates and tracks orders, icon: server}
+      pay: {title: Payment worker, sub: Charges cards, icon: credit-card}
+      queue: {kind: chip, title: Order queue}
+      cache: {kind: chip, title: Cache (Redis)}
+      idem: {kind: note, title: Orders are safe to retry by order id.}
+  data:
+    kind: zone
+    title: Data
+    tone: orange
+    nodes:
+      db: {kind: cylinder, title: Postgres, sub: Primary and replica, icon: database}
+edges:
+  - "web -> api": HTTPS
+  - {from: api, to: svc, label: REST, kind: new, badge: 1}
+  - "svc -> pay": events
+  - svc -> db

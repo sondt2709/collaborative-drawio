@@ -1,0 +1,75 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+env:
+  SEMANTIC_RELEASE_PKGS: >-
+    -p semantic-release@25.0.3
+    -p @semantic-release/commit-analyzer@13.0.1
+    -p @semantic-release/release-notes-generator@14.1.1
+    -p @semantic-release/github@12.0.3
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Compute next version
+        id: version
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NEXT=$(npx $SEMANTIC_RELEASE_PKGS semantic-release --dry-run 2>&1 \
+            | grep -Eo 'next release version is [0-9]+\.[0-9]+\.[0-9]+' \
+            | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' || true)
+          if [[ -z "$NEXT" ]]; then
+            echo "No release-worthy commits, skipping release."
+          else
+            echo "Next version: $NEXT"
+          fi
+          echo "next=$NEXT" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        if: steps.version.outputs.next != ''
+        run: npm ci
+
+      - name: Set build version
+        if: steps.version.outputs.next != ''
+        run: npm version "${{ steps.version.outputs.next }}" --no-git-tag-version
+
+      - name: Build, test and pack
+        if: steps.version.outputs.next != ''
+        run: |
+          npm run build
+          npm test
+          mkdir -p release
+          npm pack --pack-destination release
+
+      - name: Publish release
+        if: steps.version.outputs.next != ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx $SEMANTIC_RELEASE_PKGS semantic-release

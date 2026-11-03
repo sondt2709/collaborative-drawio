@@ -1,4 +1,5 @@
-import { A } from './diagram.js';
+import { A, absBoxes, floatingTexts, obstacles, readView } from './diagram.js';
+import { borderPoint, contains, crossedBoxes, segmentsCross, type Pt } from './route/geom.js';
 import type { Cell, DrawioDoc } from './model/doc.js';
 import { fromHtmlLabel } from './model/text.js';
 import { getStyle, hasBase, parseStyle } from './model/style.js';
@@ -19,7 +20,7 @@ function resolve(v: string | undefined, mode: Mode, dflt: [string, string] | und
   if (v === undefined || v === '' || v.toLowerCase() === 'default') return dflt?.[mode];
   if (v.toLowerCase() === 'none') return undefined;
   const pair = parseLightDark(v);
-  if (pair) return namedToHex(pair[mode]) ?? pair[mode];
+  if (pair) return pair[mode].toLowerCase() === 'none' ? undefined : (namedToHex(pair[mode]) ?? pair[mode]);
   const hex = namedToHex(v);
   if (!hex) return dflt?.[mode];
   // adaptiveColors="auto" changes plain colors in dark mode.
@@ -84,7 +85,72 @@ function ownerName(doc: DrawioDoc, c: Cell, byId: Map<string, Cell>): string {
   return c.id;
 }
 
-export function formatCheck(problems: Problem[]): string[] {
-  if (!problems.length) return ['check: ok'];
-  return [`check: ${problems.length} problem${problems.length > 1 ? 's' : ''}`, ...problems.map((p) => `  ${p.id}: ${p.message}`)];
+/** The page polyline of each edge whose path dgm can know (not draw.io's orthogonal or elbow styles). */
+export function edgeLines(doc: DrawioDoc): Array<{ ref: string; from: string; to: string; line: Pt[] }> {
+  const view = readView(doc);
+  const boxes = absBoxes(doc);
+  const out: Array<{ ref: string; from: string; to: string; line: Pt[] }> = [];
+  for (const e of view.edges) {
+    const a = boxes.get(e.from);
+    const b = boxes.get(e.to);
+    if (!a || !b || e.from === e.to) continue;
+    const st = doc.style(e.cell);
+    const es = getStyle(st, 'edgeStyle');
+    if (es && es !== 'none') continue;
+    const parent = doc.parentId(e.cell);
+    const off = parent ? boxes.get(parent) : undefined;
+    const pts: Pt[] = e.points.map(([x, y]) => [x + (off?.x ?? 0), y + (off?.y ?? 0)]);
+    const port = (box: typeof a, px: string | undefined, py: string | undefined): Pt | undefined =>
+      px !== undefined && py !== undefined ? [box.x + Number(px) * box.w, box.y + Number(py) * box.h] : undefined;
+    const c = (box: typeof a): Pt => [box.x + box.w / 2, box.y + box.h / 2];
+    const p1 = port(b, getStyle(st, 'entryX'), getStyle(st, 'entryY'));
+    let p0 = port(a, getStyle(st, 'exitX'), getStyle(st, 'exitY'));
+    p0 ??= borderPoint(a, pts[0] ?? p1 ?? c(b));
+    const end = p1 ?? borderPoint(b, pts[pts.length - 1] ?? p0);
+    out.push({ ref: e.ref, from: e.from, to: e.to, line: [p0, ...pts, end] });
+  }
+  return out;
+}
+
+/** Layout hints: lines through boxes, almost straight lines, line crossings, floating text. They do not change the exit code. */
+export function layoutHints(doc: DrawioDoc, theme: Theme): string[] {
+  const view = readView(doc);
+  const boxes = absBoxes(doc);
+  const obs = obstacles(doc, view, boxes, theme);
+  const hints: string[] = [];
+  const lines = edgeLines(doc);
+  for (const l of lines) {
+    const a = boxes.get(l.from)!;
+    const b = boxes.get(l.to)!;
+    const own = obs.filter((o) => o.id !== l.from && o.id !== l.to && !contains(o.box, a) && !contains(o.box, b));
+    // A line on a box border looks as bad as a line through the box: count 2 px around it.
+    const hit = crossedBoxes(l.line, own, -2);
+    if (hit.length) hints.push(`hint: edge ${l.ref} crosses ${hit.join(', ')}`);
+    for (let i = 0; i + 1 < l.line.length; i++) {
+      const dx = Math.abs(l.line[i + 1][0] - l.line[i][0]);
+      const dy = Math.abs(l.line[i + 1][1] - l.line[i][1]);
+      const off = Math.min(dx, dy);
+      const len = Math.max(dx, dy);
+      if (off >= 1 && off / len < Math.tan((4 * Math.PI) / 180)) {
+        hints.push(`hint: edge ${l.ref} is almost ${dx > dy ? 'horizontal' : 'vertical'} (off by ${Math.round(off)} px). Align the boxes or set ports`);
+        break;
+      }
+    }
+  }
+  let crossings = 0;
+  for (let i = 0; i < lines.length; i++) {
+    for (let j = i + 1; j < lines.length; j++) {
+      const A2 = lines[i].line;
+      const B2 = lines[j].line;
+      for (let s = 0; s + 1 < A2.length; s++) for (let t = 0; t + 1 < B2.length; t++) if (segmentsCross(A2[s], A2[s + 1], B2[t], B2[t + 1])) crossings++;
+    }
+  }
+  if (crossings) hints.push(`hint: ${crossings} line crossing${crossings > 1 ? 's' : ''}`);
+  for (const [t, z] of floatingTexts(doc, view)) hints.push(`hint: text ${t} sits on zone ${z} but is not part of it (dgm apply moves it into the zone)`);
+  return hints;
+}
+
+export function formatCheck(problems: Problem[], hints: string[] = []): string[] {
+  const head = problems.length ? [`check: ${problems.length} problem${problems.length > 1 ? 's' : ''}`, ...problems.map((p) => `  ${p.id}: ${p.message}`)] : ['check: ok'];
+  return [...head, ...hints];
 }

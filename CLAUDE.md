@@ -56,11 +56,12 @@ The render test in `tests/examples.test.ts` runs only when the draw.io desktop a
   - Semantic data is in `object` attributes: `dgm_kind`, `dgm_tone`, `dgm_icon`, `dgm_variant`, `dgm_style`. The cell id is the node id. The title is the cell label.
   - Helper cells have `dgm_role` (`sub`, `icon`, `badge`, `title`, `subtitle`) and ids such as `<id>.sub`. The subtitle text is only in the `<id>.sub` cell.
   - The theme name and direction are attributes of the root cell `0`.
-  - Edges are named `from -> to` (`#2` for a second edge), not by cell id.
+  - Edges are named `from -> to` (`#2` for a second edge), not by cell id. The intent of an edge is in `dgm_from_port`, `dgm_to_port`, `dgm_via` and `dgm_route`; the points are computed from it.
 - `src/theme/`: theme files (`themes/*.yaml`, lookup: `.dgm/themes/`, `~/.config/dgm/themes/`, package) and one render function for each kind. All colors go through `ld()`.
 - `src/icons/`: Lucide icon nodes to draw.io stencil XML, compressed as draw.io does.
+- `src/route/`: edge routing. `route.ts` turns ports and `via` items into points (lines on one side are spread out). The default route is straight, exactly horizontal or vertical when the boxes overlap, with a detour when the line would cross a box: simple shapes first, then an A* search on a grid of box borders (`grid.ts`). `geom.ts` has the crossing tests that `dgm check` also uses.
 - `src/dsl/parse.ts`: YAML parsing and validation. Errors name the YAML path.
-- `src/layout/`: text width table, rows inside zones, elkjs layered layout for the page, placement of new nodes.
+- `src/layout/`: text width table, elkjs layered layout (`INCLUDE_CHILDREN`) that aligns connected boxes also inside zones, rows for chips, notes and boxes without edges, placement of new nodes.
 - `src/track/track.ts`: snapshots, the diff and the log in `.dgm/<file-name>/`.
 - `src/check.ts`: raw colors and contrast in light and dark mode.
 - `src/commands/`: one file for each command. `setup.ts` also has the hook.
@@ -70,6 +71,8 @@ Rules for changes:
 - `apply` never moves an existing node, except zone growth and an explicit `at`.
 - Output must be deterministic: the same YAML gives a byte-identical file. Do not write times, random ids or machine data into `.drawio` files.
 - Write each change as a short line for the agent. Do not print XML.
+- Never overwrite the points of a line that a person dragged (`personRoutes` in `src/track/track.ts`).
+- elkjs 0.12 swaps the two values of `elk.nodeSize.minimum` when the direction is DOWN. `src/layout/layout.ts` works around it; keep the test.
 
 ## draw.io facts (verified with draw.io 32.4.1)
 

@@ -1,6 +1,7 @@
 import { iconStencil } from '../icons/index.js';
 import { buildStyle } from '../model/style.js';
-import { ld, type LD } from './color.js';
+import { contrast, ld, type LD } from './color.js';
+import type { Routed, RouteStyle } from '../route/route.js';
 import type { NodeKind, Theme } from './theme.js';
 
 /** The `style` override of a node. Colors are tone names or semantic names, never raw colors. */
@@ -68,6 +69,17 @@ export interface Rendered {
 }
 
 const HELPER = 'connectable=0;movable=0;resizable=0;rotatable=0;';
+
+/**
+ * Style rule: a container fill that looks like the page background in a mode
+ * is written as "none" in that mode.
+ */
+export function containerFill(theme: Theme, fill: LD): string {
+  const t = theme.rules.containerThreshold;
+  const parts = fill.map((c, i) => (contrast(c, theme.page.background[i]) < t[i] ? 'none' : c));
+  if (parts[0] === 'none' && parts[1] === 'none') return 'none';
+  return `light-dark(${parts[0]},${parts[1]})`;
+}
 
 function colorOf(theme: Theme, tone: string, name: string, part: 'accent' | 'tint'): LD {
   if (theme.tones[name]) return theme.tones[name][part];
@@ -152,7 +164,7 @@ export function renderNode(theme: Theme, n: NodeLook, w: number, h: number): Ren
       return {
         style: buildStyle([
           ['rounded', 1], ['arcSize', 8], ['absoluteArcSize', 1], ['html', 1], ['whiteSpace', 'wrap'],
-          ['fillColor', dashed && !fillOver ? 'none' : ld(fillOver ?? tone.tint)], ['strokeColor', ld(stroke)], ['strokeWidth', strokeWidth], ...dash,
+          ['fillColor', dashed && !fillOver ? 'none' : containerFill(theme, fillOver ?? tone.tint)], ['strokeColor', ld(stroke)], ['strokeWidth', strokeWidth], ...dash,
           ['container', 1], ['collapsible', 0], ['recursiveResize', 0],
           ['align', 'left'], ['verticalAlign', 'top'], ['spacing', 0], ['spacingLeft', n.icon ? 38 : 16], ['spacingTop', 12], ['spacingRight', 16],
           ['fontSize', s.zone.fontSize], ['fontStyle', bold(true)], ['fontColor', ld(textOver ?? (muted ? c.muted : tone.accent))], ['fontFamily', theme.font],
@@ -223,6 +235,7 @@ export function subtitleStyle(theme: Theme): string {
 export interface EdgeLook {
   kind?: string;
   variant?: string;
+  route?: RouteStyle;
 }
 
 export function edgeColor(theme: Theme, e: EdgeLook): LD {
@@ -231,16 +244,22 @@ export function edgeColor(theme: Theme, e: EdgeLook): LD {
   return (theme.tones[k.tone] ?? theme.tones[theme.defaultTone]).accent;
 }
 
-export function renderEdge(theme: Theme, e: EdgeLook): string {
+/** The style of an edge: straight by default, rounded corners, and the ports of the route. */
+export function renderEdge(theme: Theme, e: EdgeLook, r?: Routed): string {
   const k = theme.edges[e.kind ?? 'default'] ?? theme.edges.default;
   const color = edgeColor(theme, e);
   const dashed = k.dashed || e.variant === 'dashed';
+  const route = e.route ?? 'straight';
   return buildStyle([
-    ['edgeStyle', 'orthogonalEdgeStyle'], ['rounded', 1], ['html', 1], ['endArrow', 'block'], ['endFill', 1], ['endSize', 6],
+    ...(route === 'orthogonal' ? ([['edgeStyle', 'orthogonalEdgeStyle']] as Array<[string, string]>) : []),
+    ...(route === 'curved' ? ([['curved', 1]] as Array<[string, number]>) : []),
+    ['rounded', 1], ['arcSize', theme.rules.edgeArcSize], ['html', 1], ['endArrow', 'block'], ['endFill', 1], ['endSize', 6],
     ['strokeWidth', k.width + (e.variant === 'emphasis' ? 1 : 0)], ['strokeColor', ld(color)],
     ...(dashed ? ([['dashed', 1], ['dashPattern', '6 4']] as Array<[string, string | number]>) : []),
     ['fontSize', 11], ['fontStyle', k.bold || e.variant === 'emphasis' ? 1 : 0], ['fontColor', ld(color)],
     ['labelBackgroundColor', ld(theme.colors.surface)], ['fontFamily', theme.font],
+    ...(r?.exit ? ([['exitX', r.exit[0]], ['exitY', r.exit[1]], ['exitDx', 0], ['exitDy', 0]] as Array<[string, number]>) : []),
+    ...(r?.entry ? ([['entryX', r.entry[0]], ['entryY', r.entry[1]], ['entryDx', 0], ['entryDy', 0]] as Array<[string, number]>) : []),
   ]);
 }
 

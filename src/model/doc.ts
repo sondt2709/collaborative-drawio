@@ -282,6 +282,40 @@ export class DrawioDoc {
     g.setAttribute('as', as);
   }
 
+  /** The waypoints of an edge, in the coordinates of its parent. */
+  edgePoints(c: Cell): Array<[number, number]> {
+    const g = firstElement(c.cell, 'mxGeometry');
+    const arr = g && elements(g).find((e) => e.tagName === 'Array' && e.getAttribute('as') === 'points');
+    if (!arr) return [];
+    return elements(arr)
+      .filter((p) => p.tagName === 'mxPoint')
+      .map((p) => [Number(p.getAttribute('x') ?? 0) || 0, Number(p.getAttribute('y') ?? 0) || 0]);
+  }
+
+  setEdgePoints(c: Cell, points: Array<[number, number]>): void {
+    let g = firstElement(c.cell, 'mxGeometry');
+    if (!g) {
+      g = this.dom.createElement('mxGeometry');
+      g.setAttribute('relative', '1');
+      g.setAttribute('as', 'geometry');
+      c.cell.appendChild(g);
+    }
+    const old = elements(g).find((e) => e.tagName === 'Array' && e.getAttribute('as') === 'points');
+    if (old) g.removeChild(old);
+    if (points.length) {
+      const arr = this.dom.createElement('Array');
+      arr.setAttribute('as', 'points');
+      for (const [x, y] of points) {
+        const p = this.dom.createElement('mxPoint');
+        p.setAttribute('x', fmt(x));
+        p.setAttribute('y', fmt(y));
+        arr.appendChild(p);
+      }
+      g.appendChild(arr);
+    }
+    this.format(c.el, this.indentOf(c.el));
+  }
+
   /** Add a cell. Attributes make it an `object` cell. */
   addCell(n: NewCell): Cell {
     const d = this.dom;

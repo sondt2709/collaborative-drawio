@@ -95,10 +95,48 @@ interface Sized {
   h: number;
 }
 
+const DECO = new Set(['chip', 'note', 'text', 'band']);
+
 /**
- * Size a node. For a zone, place its children in rows (YAML order). A row
- * wraps at the zone maximum width, and a new row starts when the kind changes
- * or at a note. Writes child geometry into `geo`.
+ * Place children in rows (YAML order), relative to (0, 0). A row wraps at
+ * `inner` px, and a new row starts when the kind changes or at a note or a
+ * band. Writes child geometry into `geo`.
+ */
+function flowRows(theme: Theme, kids: LNode[], geo: Map<string, Geometry>, inner: number): Sized & { bands: LNode[] } {
+  const gap = theme.sizes.zone.gap;
+  let x = 0;
+  let y = 0;
+  let rowH = 0;
+  let prev: string | undefined;
+  let right = 0;
+  let bottom = 0;
+  const bands: LNode[] = [];
+  for (const c of kids) {
+    const s = sizeNode(theme, c, geo);
+    const breakRow = x > 0 && (x + s.w > inner || c.kind !== prev || c.kind === 'note' || prev === 'note' || c.kind === 'band' || prev === 'band');
+    if (breakRow) {
+      x = 0;
+      y += rowH + gap;
+      rowH = 0;
+    }
+    geo.set(c.id, { x, y, w: s.w, h: s.h });
+    if (c.kind === 'band' && !c.style?.width) bands.push(c);
+    x += s.w + gap;
+    rowH = Math.max(rowH, s.h);
+    right = Math.max(right, x - gap);
+    bottom = Math.max(bottom, y + rowH);
+    prev = c.kind;
+  }
+  return { w: right, h: bottom, bands };
+}
+
+function zoneTitleWidth(theme: Theme, n: LNode): number {
+  return textWidth(n.title, theme.sizes.zone.fontSize, true) + (n.icon ? 38 : 16) + 16;
+}
+
+/**
+ * Size a node. For a zone, place its children in rows (YAML order). Writes
+ * child geometry into `geo`.
  */
 export function sizeNode(theme: Theme, n: LNode, geo: Map<string, Geometry>): Sized {
   if (n.kind !== 'zone' || n.size) {
@@ -107,48 +145,30 @@ export function sizeNode(theme: Theme, n: LNode, geo: Map<string, Geometry>): Si
     return { w, h };
   }
   const z = theme.sizes.zone;
-  const inner = z.maxWidth - 2 * z.padding;
-  let x = z.padding;
-  let y = z.header;
-  let rowH = 0;
-  let prev: string | undefined;
-  let right = 0;
-  let bottom = z.header;
-  const flow: LNode[] = [];
-  const bands: LNode[] = [];
-  for (const c of n.children) {
-    const s = sizeNode(theme, c, geo);
-    if (c.at) {
-      geo.set(c.id, { x: c.at[0], y: c.at[1], w: s.w, h: s.h });
-      right = Math.max(right, c.at[0] + s.w);
-      bottom = Math.max(bottom, c.at[1] + s.h);
-      continue;
-    }
-    const breakRow =
-      x > z.padding && (x + s.w > z.padding + inner || c.kind !== prev || c.kind === 'note' || prev === 'note' || c.kind === 'band' || prev === 'band');
-    if (breakRow) {
-      x = z.padding;
-      y += rowH + z.gap;
-      rowH = 0;
-    }
-    geo.set(c.id, { x, y, w: s.w, h: s.h });
-    if (c.kind === 'band' && !c.style?.width) bands.push(c);
-    flow.push(c);
-    x += s.w + z.gap;
-    rowH = Math.max(rowH, s.h);
-    right = Math.max(right, x - z.gap);
-    bottom = Math.max(bottom, y + rowH);
-    prev = c.kind;
+  const flowKids = n.children.filter((c) => !c.at);
+  const rows = flowRows(theme, flowKids, geo, z.maxWidth - 2 * z.padding);
+  let right = rows.w + z.padding;
+  let bottom = z.header + rows.h;
+  for (const c of flowKids) {
+    const g = geo.get(c.id)!;
+    g.x += z.padding;
+    g.y += z.header;
   }
-  const titleW = textWidth(n.title, z.fontSize, true) + (n.icon ? 38 : 16) + 16;
-  let w = Math.max(z.minWidth, right + z.padding, titleW);
+  for (const c of n.children) {
+    if (!c.at) continue;
+    const s = sizeNode(theme, c, geo);
+    geo.set(c.id, { x: c.at[0], y: c.at[1], w: s.w, h: s.h });
+    right = Math.max(right, c.at[0] + s.w);
+    bottom = Math.max(bottom, c.at[1] + s.h);
+  }
+  let w = Math.max(z.minWidth, right + z.padding, zoneTitleWidth(theme, n));
   if (n.style?.width) w = n.style.width;
   // A band in a zone spans the zone.
-  for (const b of bands) {
+  for (const b of rows.bands) {
     const g = geo.get(b.id)!;
     g.w = Math.max(g.w, w - 2 * z.padding);
   }
-  let h = flow.length || n.children.length ? bottom + z.padding : z.header + 40;
+  let h = n.children.length ? bottom + z.padding : z.header + 40;
   if (n.style?.height) h = n.style.height;
   return { w: r(w), h: r(h) };
 }
@@ -168,27 +188,172 @@ function topOf(id: string, parent: Map<string, string>): string {
 const ELK = createRequire(import.meta.url)('elkjs/lib/elk.bundled.js') as new () => ElkApi;
 const elk = new ELK();
 
-async function elkLayout(theme: Theme, direction: 'down' | 'right', nodes: Array<{ id: string; w: number; h: number }>, edges: Array<{ from: string; to: string }>) {
+interface ElkIn {
+  id: string;
+  width?: number;
+  height?: number;
+  layoutOptions?: Record<string, string>;
+  children?: ElkIn[];
+}
+
+interface ElkOut {
+  id: string;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  children?: ElkOut[];
+}
+
+/** Shared state of one layout run. */
+class Ctx {
+  /** Edge endpoints (node ids). */
+  endpoints = new Set<string>();
+  parent = new Map<string, string>();
+  /** Rows of the non-graph children of each compound zone. */
+  rows = new Map<string, { size: Sized; kids: LNode[]; bands: LNode[]; at: LNode[] }>();
+  compound = new Set<string>();
+  constructor(
+    readonly theme: Theme,
+    readonly geo: Map<string, Geometry>,
+    readonly direction: 'down' | 'right',
+  ) {}
+
+  /** A zone that contains an edge endpoint (chips, notes, text and bands do not count). */
+  hasEndpointInside(n: LNode): boolean {
+    return n.children.some((c) => !DECO.has(c.kind) && (this.endpoints.has(c.id) || this.hasEndpointInside(c)));
+  }
+
+  isCompound(n: LNode): boolean {
+    return n.kind === 'zone' && !n.size && this.hasEndpointInside(n);
+  }
+
+  isAncestor(a: string, b: string): boolean {
+    let cur = this.parent.get(b);
+    for (let i = 0; cur && i < 100; i++) {
+      if (cur === a) return true;
+      cur = this.parent.get(cur);
+    }
+    return false;
+  }
+}
+
+function elkOptions(theme: Theme, direction: 'down' | 'right'): Record<string, string> {
   const p = theme.sizes.page;
-  const graph = await elk.layout({
-    id: 'root',
+  return {
+    'elk.algorithm': 'layered',
+    'elk.direction': direction === 'right' ? 'RIGHT' : 'DOWN',
+    'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
+    'elk.spacing.nodeNode': String(p.nodeGap),
+    'elk.layered.spacing.nodeNodeBetweenLayers': String(p.layerGap),
+    'elk.spacing.edgeNode': '20',
+    'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
+    'elk.edgeRouting': 'ORTHOGONAL',
+    'elk.layered.nodePlacement.strategy': 'BRANDES_KOEPF',
+    'elk.layered.nodePlacement.bk.fixedAlignment': 'BALANCED',
+    'elk.layered.nodePlacement.favorStraightEdges': 'true',
+    'elk.padding': '[top=0,left=0,bottom=0,right=0]',
+    'elk.randomSeed': '1',
+  };
+}
+
+/** The elk node of `n`. A compound zone has its graph children inside; the other children go in rows below. */
+function toElk(ctx: Ctx, n: LNode, ids: Set<string>): ElkIn {
+  ids.add(n.id);
+  const { theme, geo } = ctx;
+  if (!ctx.isCompound(n)) {
+    const s = sizeNode(theme, n, geo);
+    return { id: n.id, width: s.w, height: s.h };
+  }
+  ctx.compound.add(n.id);
+  const z = theme.sizes.zone;
+  const inGraph = (c: LNode) => !c.at && !DECO.has(c.kind) && (ctx.endpoints.has(c.id) || (c.kind === 'zone' && ctx.hasEndpointInside(c)));
+  const graphKids = n.children.filter(inGraph);
+  const rowKids = n.children.filter((c) => !c.at && !inGraph(c));
+  const at = n.children.filter((c) => c.at);
+  const rows = flowRows(theme, rowKids, geo, z.maxWidth - 2 * z.padding);
+  for (const c of at) {
+    const s = sizeNode(theme, c, geo);
+    geo.set(c.id, { x: c.at![0], y: c.at![1], w: s.w, h: s.h });
+  }
+  ctx.rows.set(n.id, { size: rows, kids: rowKids, bands: rows.bands, at });
+  // Rows go beside the graph, away from the flow: on the right for direction
+  // down, below for direction right. So lines into and out of the zone do not cross them.
+  const side = ctx.direction === 'down';
+  const rowsGap = rows.h ? z.gap * 2 : 0;
+  const minW = side
+    ? Math.max(z.minWidth, zoneTitleWidth(theme, n), n.style?.width ?? 0)
+    : Math.max(z.minWidth, zoneTitleWidth(theme, n), rows.w + 2 * z.padding, n.style?.width ?? 0);
+  const right = z.padding + (side && rows.w ? rows.w + rowsGap : 0);
+  const bottom = z.padding + (!side && rows.h ? rows.h + rowsGap : 0);
+  const minH = z.header + (side ? rows.h : 0) + bottom;
+  return {
+    id: n.id,
     layoutOptions: {
-      'elk.algorithm': 'layered',
-      'elk.direction': direction === 'right' ? 'RIGHT' : 'DOWN',
-      'elk.spacing.nodeNode': String(p.nodeGap),
-      'elk.layered.spacing.nodeNodeBetweenLayers': String(p.layerGap),
-      'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
-      'elk.edgeRouting': 'ORTHOGONAL',
-      'elk.layered.nodePlacement.strategy': 'BRANDES_KOEPF',
-      'elk.padding': '[top=0,left=0,bottom=0,right=0]',
-      'elk.randomSeed': '1',
+      'elk.padding': `[top=${z.header},left=${z.padding},bottom=${bottom},right=${right}]`,
+      'elk.nodeSize.constraints': 'MINIMUM_SIZE',
+      // elkjs swaps the two values of the minimum size when the direction is DOWN (seen in 0.12).
+      'elk.nodeSize.minimum': side ? `(${r(minH)},${r(minW)})` : `(${r(minW)},${r(minH)})`,
     },
-    children: nodes.map((n) => ({ id: n.id, width: n.w, height: n.h })),
-    edges: edges.map((e, i) => ({ id: `e${i}`, sources: [e.from], targets: [e.to] })),
-  });
-  const out = new Map<string, { x: number; y: number }>();
-  for (const c of graph.children ?? []) out.set(c.id, { x: r(c.x ?? 0), y: r(c.y ?? 0) });
-  return out;
+    children: graphKids.map((c) => toElk(ctx, c, ids)),
+  };
+}
+
+/** Write the geometry of an elk result, and place the rows of compound zones. */
+function fromElk(ctx: Ctx, node: ElkOut): void {
+  const z = ctx.theme.sizes.zone;
+  for (const c of node.children ?? []) {
+    const g = { x: r(c.x ?? 0), y: r(c.y ?? 0), w: r(c.width ?? 0), h: r(c.height ?? 0) };
+    ctx.geo.set(c.id, g);
+    const rows = ctx.rows.get(c.id);
+    if (rows) {
+      const side = ctx.direction === 'down';
+      const left = side ? g.w - z.padding - rows.size.w : z.padding;
+      const top = side ? z.header : g.h - z.padding - rows.size.h;
+      for (const k of rows.kids) {
+        const kg = ctx.geo.get(k.id)!;
+        kg.x += left;
+        kg.y += top;
+      }
+      if (!side) for (const b of rows.bands) ctx.geo.get(b.id)!.w = Math.max(ctx.geo.get(b.id)!.w, g.w - 2 * z.padding);
+      for (const k of rows.at) {
+        const kg = ctx.geo.get(k.id)!;
+        g.w = Math.max(g.w, kg.x + kg.w + z.padding);
+        g.h = Math.max(g.h, kg.y + kg.h + z.padding);
+      }
+    }
+    fromElk(ctx, c);
+  }
+}
+
+/** Lay out a group of top-level nodes with elk. Returns the box of each member, relative to the group. */
+async function elkGroup(ctx: Ctx, members: LNode[], edges: LEdge[]): Promise<Map<string, Geometry>> {
+  const ids = new Set<string>();
+  const children = members.map((m) => toElk(ctx, m, ids));
+  const lift = (id: string): string | undefined => {
+    let cur: string | undefined = id;
+    for (let i = 0; cur && i < 100; i++) {
+      if (ids.has(cur)) return cur;
+      cur = ctx.parent.get(cur);
+    }
+    return undefined;
+  };
+  const seen = new Set<string>();
+  const elkEdges: Array<{ id: string; sources: string[]; targets: string[] }> = [];
+  for (const e of edges) {
+    const a = lift(e.from);
+    const b = lift(e.to);
+    if (!a || !b || a === b || ctx.isAncestor(a, b) || ctx.isAncestor(b, a)) continue;
+    const k = `${a}\u0000${b}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    elkEdges.push({ id: `e${elkEdges.length}`, sources: [a], targets: [b] });
+  }
+  const out = (await elk.layout({ id: "root", layoutOptions: elkOptions(ctx.theme, ctx.direction), children, edges: elkEdges } as never)) as unknown as ElkOut;
+  fromElk(ctx, out);
+  const res = new Map<string, Geometry>();
+  for (const m of members) res.set(m.id, ctx.geo.get(m.id)!);
+  return res;
 }
 
 /**
@@ -196,19 +361,10 @@ async function elkLayout(theme: Theme, direction: 'down' | 'right', nodes: Array
  * groups are packed in rows (direction down) or in one column (direction right),
  * in YAML order.
  */
-async function layered(theme: Theme, direction: 'down' | 'right', nodes: Array<{ id: string; w: number; h: number }>, edges: LEdge[]) {
-  const p = theme.sizes.page;
+async function layered(ctx: Ctx, nodes: LNode[], edges: LEdge[], lifted: LEdge[]): Promise<Map<string, Geometry>> {
+  const p = ctx.theme.sizes.page;
   const ids = new Set(nodes.map((n) => n.id));
-  const seen = new Set<string>();
-  const links: LEdge[] = [];
-  for (const e of edges) {
-    if (e.from === e.to || !ids.has(e.from) || !ids.has(e.to)) continue;
-    const k = `${e.from}\u0000${e.to}`;
-    if (seen.has(k)) continue;
-    seen.add(k);
-    links.push(e);
-  }
-  // Connected groups (union-find), in YAML order of their first node.
+  // Connected groups (union-find on top-level edges), in YAML order of their first node.
   const root = new Map(nodes.map((n) => [n.id, n.id]));
   const find = (x: string): string => {
     let c = x;
@@ -216,33 +372,32 @@ async function layered(theme: Theme, direction: 'down' | 'right', nodes: Array<{
     root.set(x, c);
     return c;
   };
-  for (const e of links) root.set(find(e.from), find(e.to));
-  const groups = new Map<string, Array<{ id: string; w: number; h: number }>>();
+  for (const e of lifted) if (e.from !== e.to && ids.has(e.from) && ids.has(e.to)) root.set(find(e.from), find(e.to));
+  const groups = new Map<string, LNode[]>();
   for (const n of nodes) {
     const g = find(n.id);
     if (!groups.has(g)) groups.set(g, []);
     groups.get(g)!.push(n);
   }
-  const out = new Map<string, { x: number; y: number }>();
+  const out = new Map<string, Geometry>();
   const maxW = p.maxWidth ?? 1200;
   let x = 0;
   let y = 0;
   let rowH = 0;
   for (const members of groups.values()) {
-    const memberIds = new Set(members.map((m) => m.id));
-    const pos =
-      members.length === 1
-        ? new Map([[members[0].id, { x: 0, y: 0 }]])
-        : await elkLayout(theme, direction, members, links.filter((e) => memberIds.has(e.from)));
+    let boxes: Map<string, Geometry>;
+    if (members.length === 1 && !ctx.isCompound(members[0])) {
+      const s = sizeNode(ctx.theme, members[0], ctx.geo);
+      boxes = new Map([[members[0].id, { x: 0, y: 0, ...s }]]);
+    } else boxes = await elkGroup(ctx, members, edges);
     let w = 0;
     let h = 0;
-    for (const m of members) {
-      const v = pos.get(m.id)!;
-      w = Math.max(w, v.x + m.w);
-      h = Math.max(h, v.y + m.h);
+    for (const b of boxes.values()) {
+      w = Math.max(w, b.x + b.w);
+      h = Math.max(h, b.y + b.h);
     }
-    if (direction === 'right') {
-      for (const m of members) out.set(m.id, { x: pos.get(m.id)!.x, y: y + pos.get(m.id)!.y });
+    if (direction(ctx) === 'right') {
+      for (const [id, b] of boxes) out.set(id, { ...b, y: y + b.y });
       y += h + p.gap;
       continue;
     }
@@ -251,28 +406,34 @@ async function layered(theme: Theme, direction: 'down' | 'right', nodes: Array<{
       y += rowH + p.gap;
       rowH = 0;
     }
-    for (const m of members) out.set(m.id, { x: x + pos.get(m.id)!.x, y: y + pos.get(m.id)!.y });
+    for (const [id, b] of boxes) out.set(id, { ...b, x: x + b.x, y: y + b.y });
     x += w + p.gap;
     rowH = Math.max(rowH, h);
   }
   return out;
 }
 
+function direction(ctx: Ctx): 'down' | 'right' {
+  return ctx.direction;
+}
+
 /** Place all nodes with the create rules. */
 export async function layoutDiagram(theme: Theme, input: LayoutInput): Promise<LayoutResult> {
   const p = theme.sizes.page;
   const geo = new Map<string, Geometry>();
-  const parent = new Map<string, string>();
+  const ctx = new Ctx(theme, geo, input.direction);
   const walk = (ns: LNode[], par: string) => {
     for (const n of ns) {
-      parent.set(n.id, par);
+      ctx.parent.set(n.id, par);
       walk(n.children, n.id);
     }
   };
   walk(input.nodes, 'page');
-
-  const sizes = new Map<string, Sized>();
-  for (const n of input.nodes) sizes.set(n.id, sizeNode(theme, n, geo));
+  for (const e of input.edges) {
+    if (e.from === e.to) continue;
+    ctx.endpoints.add(e.from);
+    ctx.endpoints.add(e.to);
+  }
 
   const ts = theme.sizes.title;
   const res: LayoutResult = { geo };
@@ -287,8 +448,8 @@ export async function layoutDiagram(theme: Theme, input: LayoutInput): Promise<L
   }
   if (input.title || input.subtitle) top += 24;
 
-  // Lift edges to their top-level nodes.
-  const lifted = input.edges.map((e) => ({ from: topOf(e.from, parent), to: topOf(e.to, parent) }));
+  // Lift edges to their top-level nodes, for the groups.
+  const lifted = input.edges.map((e) => ({ from: topOf(e.from, ctx.parent), to: topOf(e.to, ctx.parent) }));
 
   // Split the page into segments at top-level bands.
   type Seg = { band?: LNode; nodes: LNode[] };
@@ -296,8 +457,9 @@ export async function layoutDiagram(theme: Theme, input: LayoutInput): Promise<L
   let cur: Seg = { nodes: [] };
   for (const n of input.nodes) {
     if (n.at) {
-      const s = sizes.get(n.id)!;
-      geo.set(n.id, { x: n.at[0], y: n.at[1], w: s.w, h: s.h });
+      const boxes = ctx.isCompound(n) ? await elkGroup(ctx, [n], input.edges) : new Map([[n.id, { x: 0, y: 0, ...sizeNode(theme, n, geo) }]]);
+      const b = boxes.get(n.id)!;
+      geo.set(n.id, { x: n.at[0], y: n.at[1], w: b.w, h: b.h });
       continue;
     }
     if (n.kind === 'band') {
@@ -313,19 +475,14 @@ export async function layoutDiagram(theme: Theme, input: LayoutInput): Promise<L
   const bands: LNode[] = [];
   for (const seg of segs) {
     if (seg.band) {
-      const s = sizes.get(seg.band.id)!;
+      const s = sizeNode(theme, seg.band, geo);
       geo.set(seg.band.id, { x: p.margin, y, w: s.w, h: s.h });
       if (!seg.band.style?.width) bands.push(seg.band);
       contentW = Math.max(contentW, s.w);
-      y += s.h + p.gap / 2;
+      y += s.h + p.gap;
       continue;
     }
-    const pos = await layered(
-      theme,
-      input.direction,
-      seg.nodes.map((n) => ({ id: n.id, ...sizes.get(n.id)! })),
-      lifted,
-    );
+    const pos = await layered(ctx, seg.nodes, input.edges, lifted);
     let minX = Infinity;
     let minY = Infinity;
     for (const v of pos.values()) {
@@ -334,9 +491,8 @@ export async function layoutDiagram(theme: Theme, input: LayoutInput): Promise<L
     }
     let segH = 0;
     for (const n of seg.nodes) {
-      const s = sizes.get(n.id)!;
       const v = pos.get(n.id)!;
-      const g = { x: p.margin + v.x - minX, y: y + v.y - minY, w: s.w, h: s.h };
+      const g = { x: p.margin + v.x - minX, y: y + v.y - minY, w: v.w, h: v.h };
       geo.set(n.id, g);
       segH = Math.max(segH, g.y + g.h - y);
       contentW = Math.max(contentW, g.x + g.w - p.margin);

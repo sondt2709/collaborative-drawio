@@ -28,6 +28,10 @@ export interface SEdge {
   kind?: string;
   variant?: string;
   badge?: string;
+  /** Waypoints, rounded. */
+  pts?: Array<[number, number]>;
+  /** Fixed ends: "exitX,exitY>entryX,entryY". */
+  ends?: string;
   s: Record<string, string>;
 }
 
@@ -87,6 +91,9 @@ export function snapshot(doc: DrawioDoc): Snapshot {
     if (e.kind) s.kind = e.kind;
     if (e.variant) s.variant = e.variant;
     if (e.badge) s.badge = e.badge;
+    if (e.points.length) s.pts = e.points.map(([x, y]) => [round(x), round(y)]);
+    const ends = endsOf(doc.style(e.cell));
+    if (ends) s.ends = ends;
     snap.edges[e.id] = s;
   }
   return snap;
@@ -194,6 +201,10 @@ export function diff(a: Snapshot, b: Snapshot): Diff {
     field('kind', o.kind, e.kind);
     field('variant', o.variant, e.variant);
     field('badge', o.badge, e.badge);
+    if (o.from === e.from && o.to === e.to && (!samePts(o.pts, e.pts) || (o.ends ?? '') !== (e.ends ?? ''))) {
+      push(`~ edge ${e.ref} route changed in draw.io`);
+      changed = true;
+    }
     const keys = styleKeysChanged(o.s, e.s);
     if (keys.length && o.kind === e.kind && o.variant === e.variant) {
       push(`~ edge ${e.ref} style: ${keys.join(', ')}`);
@@ -208,6 +219,48 @@ export function diff(a: Snapshot, b: Snapshot): Diff {
     }
   }
   return d;
+}
+
+function samePts(a: Array<[number, number]> | undefined, b: Array<[number, number]> | undefined): boolean {
+  const x = a ?? [];
+  const y = b ?? [];
+  return x.length === y.length && x.every((p, i) => Math.abs(p[0] - y[i][0]) <= 1 && Math.abs(p[1] - y[i][1]) <= 1);
+}
+
+/**
+ * Edges whose points differ from the last agent snapshot: a person changed
+ * their route. Returns edge id -> current points.
+ */
+export interface PersonRoute {
+  points: Array<[number, number]>;
+  exit?: [number, number];
+  entry?: [number, number];
+}
+
+function endsOf(style: string): string | undefined {
+  const m = styleMap(style);
+  const v = (k: string) => m.get(k);
+  const ex = v('exitX') !== undefined ? `${v('exitX')},${v('exitY')}` : '';
+  const en = v('entryX') !== undefined ? `${v('entryX')},${v('entryY')}` : '';
+  return ex || en ? `${ex}>${en}` : undefined;
+}
+
+export function personRoutes(file: string, doc: DrawioDoc): Map<string, PersonRoute> {
+  const out = new Map<string, PersonRoute>();
+  const last = lastSnapshot(file, 'agent');
+  if (!last) return out;
+  for (const e of readView(doc).edges) {
+    const o = last.edges[e.id];
+    if (!o || o.from !== e.from || o.to !== e.to) continue;
+    const pts = e.points.map(([x, y]) => [round(x), round(y)] as [number, number]);
+    const ends = endsOf(doc.style(e.cell));
+    if (samePts(o.pts, pts) && (o.ends ?? '') === (ends ?? '')) continue;
+    const m = styleMap(doc.style(e.cell));
+    const pair = (a: string, b: string): [number, number] | undefined =>
+      m.get(a) !== undefined && m.get(b) !== undefined ? [Number(m.get(a)), Number(m.get(b))] : undefined;
+    out.set(e.id, { points: e.points, exit: pair('exitX', 'exitY'), entry: pair('entryX', 'entryY') });
+  }
+  return out;
 }
 
 export function summarize(d: Diff): string {

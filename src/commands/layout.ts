@@ -1,8 +1,9 @@
-import { checkDoc, formatCheck } from '../check.js';
+import { checkDoc, formatCheck, layoutHints } from '../check.js';
 import { Editor, type DiagramView, type NodeInfo } from '../diagram.js';
 import { EXIT } from '../errors.js';
 import { layoutDiagram, type LNode } from '../layout/layout.js';
-import { ackHuman, agentPlacements, record, snapshot } from '../track/track.js';
+import { ackHuman, agentPlacements, personRoutes, record, snapshot } from '../track/track.js';
+import { keepPersonRoutes } from './apply.js';
 import { loadDiagram, plural, writeDoc, type IO } from './common.js';
 
 /** Build layout input from the current diagram. Nodes in `keep` keep their position. */
@@ -34,6 +35,7 @@ export function viewToLNodes(view: DiagramView, keep: Set<string>): LNode[] {
 
 export async function layout(io: IO, file: string, opts: { keepMoved?: boolean }): Promise<number> {
   const { path, doc, theme, view } = loadDiagram(io, file);
+  const routes = personRoutes(path, doc);
   const human = ackHuman(path, doc);
   if (human) io.out(`recorded human changes: ${human.lines.length} line${human.lines.length > 1 ? 's' : ''}`);
   const keep = new Set<string>();
@@ -66,10 +68,15 @@ export async function layout(io: IO, file: string, opts: { keepMoved?: boolean }
     ed.renderNode(n.id);
   }
   ed.setTitles(view.title, view.subtitle, res.title, res.subtitle);
+  const grouped = ed.groupText();
+  const kept = keepPersonRoutes(doc, ed, routes);
+  ed.routeAll({ includeLegacy: true });
   writeDoc(path, doc);
   const entry = record(path, 'agent', snapshot(doc), `layout: ${plural(moved, 'node')} placed again${keep.size ? `, ${keep.size} kept` : ''}`);
   io.out(`${file}: ${plural(moved, 'node')} placed again${keep.size ? `, ${plural(keep.size, 'moved node')} kept: ${[...keep].join(', ')}` : ''} (${entry.id})`);
+  if (grouped.length) io.out(`grouped text: ${grouped.join(', ')}`);
+  if (kept.length) io.out(`kept the route that a person changed: ${kept.join(', ')}`);
   const problems = checkDoc(doc, theme);
-  for (const l of formatCheck(problems)) io.out(l);
+  for (const l of formatCheck(problems, layoutHints(doc, theme))) io.out(l);
   return problems.length ? EXIT.problems : EXIT.ok;
 }

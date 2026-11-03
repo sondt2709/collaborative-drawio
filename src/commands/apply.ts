@@ -1,13 +1,14 @@
-import { checkDoc, formatCheck } from '../check.js';
-import { A, Editor, SUB_KINDS, findEdge, readView, type DiagramView, type NodeInfo } from '../diagram.js';
-import { parseApply, readYaml, type ApplySpec, type NodeSpec } from '../dsl/parse.js';
+import { checkDoc, formatCheck, layoutHints } from '../check.js';
+import { A, Editor, SUB_KINDS, absBoxes, findEdge, readView, type DiagramView, type EdgeIntentFields, type NodeInfo } from '../diagram.js';
+import { parseApply, readYaml, viaIds, type ApplySpec, type NodeSpec } from '../dsl/parse.js';
 import { EXIT, ValidationError } from '../errors.js';
 import { overlap, placeBelow, placeInZone, placeNear, sizeNode, type Box } from '../layout/layout.js';
 import type { DrawioDoc, Geometry } from '../model/doc.js';
 import { fromHtmlLabel, toHtmlLabel } from '../model/text.js';
 import { serializeOverride } from '../theme/render.js';
 import type { NodeKind, Theme } from '../theme/theme.js';
-import { pending, record, snapshot, summarize } from '../track/track.js';
+import { pending, personRoutes, record, snapshot, summarize, type PersonRoute } from '../track/track.js';
+import { portFromFraction } from '../route/route.js';
 import { loadDiagram, plural, readInput, specToLNode, writeDoc, type IO } from './common.js';
 
 const ICON_KINDS: NodeKind[] = ['card', 'cylinder', 'zone', 'chip', 'band'];
@@ -26,7 +27,7 @@ function flatten(n: NodeSpec): NodeSpec[] {
  * connect, move, remove. Throws a ValidationError (and the caller writes
  * nothing) when one operation is invalid.
  */
-export function executeApply(doc: DrawioDoc, theme: Theme, ops: ApplySpec): ApplyResult {
+export function executeApply(doc: DrawioDoc, theme: Theme, ops: ApplySpec, opts: { personRoutes?: Map<string, PersonRoute> } = {}): ApplyResult {
   const ed = new Editor(doc, theme);
   const problems: string[] = [];
   const bad = (path: string, msg: string) => problems.push(`${path}: ${msg}`);
@@ -37,6 +38,12 @@ export function executeApply(doc: DrawioDoc, theme: Theme, ops: ApplySpec): Appl
   };
   const layer = doc.cells().find((c) => doc.parentId(c) === '0')?.id ?? '1';
   const before = new Map(view.nodes.map((n) => [n.id, { ...n.geo }]));
+  const touchedEdges = new Set<string>();
+  const kept: string[] = [];
+  // Routes that a person changed in draw.io become the edge intent, so they stay.
+  const steered = new Set(ops.set.filter((o) => o.ref.includes('->') && ('via' in o.fields || 'from' in o.fields || 'to' in o.fields)).map((o) => findEdge(view, o.ref)?.id ?? ''));
+  kept.push(...keepPersonRoutes(doc, ed, opts.personRoutes, steered));
+  if (kept.length) refresh();
   const renamed = new Map<string, string>(); // new id -> old id
   const isZone = (id: string) => view.byId.get(id)?.kind === 'zone';
   const boxes = (parent: string, except?: string): Box[] =>
@@ -138,7 +145,22 @@ export function executeApply(doc: DrawioDoc, theme: Theme, ops: ApplySpec): Appl
         if ('edgeKind' in f || !doc.attr(c, A.kind)) c = doc.setAttr(c, A.kind, f.edgeKind ?? doc.attr(c, A.kind) ?? 'default');
         if ('variant' in f) c = doc.setAttr(c, A.variant, f.variant ?? undefined);
       }
+      for (const end of ['from', 'to'] as const) {
+        const v = f[end];
+        if (v && !view.byId.has(v.id)) bad(`${op.path}.${end}`, `unknown node "${v.id}"`);
+      }
+      for (const vid of viaIds({ via: f.via ?? undefined })) if (!view.byId.has(vid)) bad(`${op.path}.via`, `unknown node "${vid}" in via`);
+      if (problems.length) continue;
+      if (f.from && f.from.id !== e.from) c.cell.setAttribute('source', f.from.id);
+      if (f.to && f.to.id !== e.to) c.cell.setAttribute('target', f.to.id);
+      const intent: EdgeIntentFields = {};
+      if (f.from) intent.fromPort = f.from.port ?? null;
+      if (f.to) intent.toPort = f.to.port ?? null;
+      if ('via' in f) intent.via = f.via ?? null;
+      if ('route' in f) intent.route = f.route ?? null;
+      ed.setEdgeIntent(e.id, intent);
       ed.renderEdge(e.id, 'badge' in f ? f.badge : undefined);
+      touchedEdges.add(e.id);
       changedEdges.push(e.ref);
       refresh();
       continue;
@@ -186,12 +208,12 @@ export function executeApply(doc: DrawioDoc, theme: Theme, ops: ApplySpec): Appl
   // ---- connect
   let connected = 0;
   for (const e of ops.connect) {
-    const missing = [e.from, e.to].filter((x) => !view.byId.has(x));
+    const missing = [e.from, e.to, ...viaIds(e)].filter((x) => !view.byId.has(x));
     if (missing.length) {
       for (const m of missing) bad(e.path, `unknown node "${m}"`);
       continue;
     }
-    ed.insertEdge(e);
+    touchedEdges.add(ed.insertEdge(e));
     connected++;
   }
   refresh();
@@ -280,6 +302,11 @@ export function executeApply(doc: DrawioDoc, theme: Theme, ops: ApplySpec): Appl
 
   if (problems.length) throw new ValidationError(problems);
 
+  // ---- style rules and routes
+  const grouped = ed.groupText();
+  ed.routeAll({ force: touchedEdges });
+  refresh();
+
   // ---- overlaps after zone growth
   for (const z of grown) {
     const n = view.byId.get(z);
@@ -301,13 +328,34 @@ export function executeApply(doc: DrawioDoc, theme: Theme, ops: ApplySpec): Appl
   if (moved.length) lines.push(`moved ${plural(moved.length, 'node')}: ${moved.join(', ')}`);
   nodesLine('-', removedNodes);
   if (removedEdges) lines.push(`-${plural(removedEdges, 'edge')}`);
-  let kept = 0;
+  let keptInPlace = 0;
   for (const n of view.nodes) {
     const old = before.get(renamed.get(n.id) ?? n.id);
-    if (old && !moved.includes(n.id) && old.x === n.geo.x && old.y === n.geo.y) kept++;
+    if (old && !moved.includes(n.id) && old.x === n.geo.x && old.y === n.geo.y) keptInPlace++;
   }
-  lines.push(`${plural(kept, 'node')} kept in place`);
+  lines.push(`${plural(keptInPlace, 'node')} kept in place`);
+  if (grouped.length) lines.push(`grouped text: ${grouped.join(', ')}`);
+  if (kept.length) lines.push(`kept the route that a person changed: ${kept.join(', ')}`);
   return { lines, warnings };
+}
+
+/** Store the routes that a person changed as the edge intent (exact points and ports). Returns the edge references. */
+export function keepPersonRoutes(doc: DrawioDoc, ed: Editor, routes: Map<string, PersonRoute> | undefined, skip: Set<string> = new Set()): string[] {
+  const view = readView(doc);
+  const refs: string[] = [];
+  for (const [id, pr] of routes ?? []) {
+    const e = view.edges.find((x) => x.id === id);
+    if (!e || !e.kind || skip.has(id)) continue;
+    const parent = doc.parentId(e.cell);
+    const off = parent ? absBoxes(doc).get(parent) : undefined;
+    ed.setEdgeIntent(id, {
+      via: pr.points.map(([x, y]) => ({ kind: 'point' as const, x: x + (off?.x ?? 0), y: y + (off?.y ?? 0) })),
+      ...(pr.exit ? { fromPort: portFromFraction(pr.exit) ?? null } : {}),
+      ...(pr.entry ? { toPort: portFromFraction(pr.entry) ?? null } : {}),
+    });
+    refs.push(e.ref);
+  }
+  return refs;
 }
 
 function renameNode(doc: DrawioDoc, from: string, to: string): void {
@@ -329,7 +377,7 @@ export async function apply(io: IO, file: string, opts: { from?: string }): Prom
   const { path, doc, theme } = loadDiagram(io, file);
   const ops = parseApply(readYaml(await readInput(io, opts.from)), theme);
   const human = pending(path, doc);
-  const res = executeApply(doc, theme, ops);
+  const res = executeApply(doc, theme, ops, { personRoutes: personRoutes(path, doc) });
   if (human && human.diff.lines.length) record(path, 'human', human.snap, summarize(human.diff));
   writeDoc(path, doc);
   const entry = record(path, 'agent', snapshot(doc), `apply: ${res.lines.filter((l) => !l.endsWith('kept in place')).join('; ') || 'no change'}`);
@@ -337,6 +385,6 @@ export async function apply(io: IO, file: string, opts: { from?: string }): Prom
   for (const l of res.lines) io.out(l);
   for (const w of res.warnings) io.out(w);
   const problems = checkDoc(doc, theme);
-  for (const l of formatCheck(problems)) io.out(l);
+  for (const l of formatCheck(problems, layoutHints(doc, theme))) io.out(l);
   return problems.length ? EXIT.problems : EXIT.ok;
 }

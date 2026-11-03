@@ -26,13 +26,6 @@ nodes:
       rec: {kind: chip, title: Recommendations, tone: violet}
       idem: {kind: note, title: "Every API call is safe to retry: requests carry an id."}
   bus: {kind: band, title: Event bus. Every service publishes its events here., icon: radio-tower, tone: teal}
-  media:
-    kind: zone
-    title: Media processing
-    tone: violet
-    nodes:
-      transcode: {title: Transcoder, sub: HLS and DASH renditions, icon: film}
-      thumbs: {title: Thumbnailer, sub: Posters and previews, icon: image}
   data:
     kind: zone
     title: Storage
@@ -40,6 +33,13 @@ nodes:
     nodes:
       catdb: {kind: cylinder, title: Catalog DB, sub: Titles and rights, icon: database}
       blobs: {kind: cylinder, title: Media store, sub: Source and renditions, icon: hard-drive}
+  media:
+    kind: zone
+    title: Media processing
+    tone: violet
+    nodes:
+      transcode: {title: Transcoder, sub: HLS and DASH renditions, icon: film}
+      thumbs: {title: Thumbnailer, sub: Posters and previews, icon: image}
   insights:
     kind: zone
     title: Analytics

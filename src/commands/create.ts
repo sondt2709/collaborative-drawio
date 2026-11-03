@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { basename } from 'node:path';
-import { checkDoc, formatCheck } from '../check.js';
+import { checkDoc, formatCheck, layoutHints } from '../check.js';
 import { A, Editor } from '../diagram.js';
 import { parseDiagram, readYaml, themeNameOf, type DiagramSpec, type NodeSpec } from '../dsl/parse.js';
 import { DgmError, EXIT } from '../errors.js';
@@ -30,6 +30,8 @@ export async function buildDiagram(spec: DiagramSpec, theme: Theme, pageName: st
   ed.setTitles(spec.title, spec.subtitle, lay.title, lay.subtitle);
   for (const n of spec.nodes) ed.insertNode(n, '1', lay.geo);
   for (const e of spec.edges) ed.insertEdge(e);
+  ed.groupText();
+  ed.routeAll({ includeLegacy: true });
   return doc;
 }
 
@@ -45,6 +47,6 @@ export async function create(io: IO, file: string, opts: { force?: boolean; from
   const entry = record(path, 'agent', snapshot(doc), summary);
   io.out(`${file}: ${plural(count(spec.nodes), 'node')}, ${plural(spec.edges.length, 'edge')}, theme ${theme.name} (${entry.id})`);
   const problems = checkDoc(doc, theme);
-  for (const l of formatCheck(problems)) io.out(l);
+  for (const l of formatCheck(problems, layoutHints(doc, theme))) io.out(l);
   return problems.length ? EXIT.problems : EXIT.ok;
 }

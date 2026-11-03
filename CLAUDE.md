@@ -28,6 +28,15 @@ This repository is public. Do not publish personal or sensitive data.
 
 Put evidence, demos, spikes, screenshots and other local files in `./tmp`. Git ignores `tmp/`. Do not commit them.
 
+## File names
+
+Use the `.yaml` extension for all YAML files, also GitHub workflows. Do not use `.yml`.
+
+## Release
+
+- Each `feat` or `fix` merge to `main` makes a release. `.github/workflows/release.yaml` creates the GitHub release with semantic-release, then publishes the same tarball to npm as `collaborative-drawio`.
+- npm trusted publishing (OIDC) names the workflow file `release.yaml`. If you rename it, update the trusted publisher on npmjs.com first.
+
 ## PR rules
 
 - Use Conventional Commits for PR titles: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`.

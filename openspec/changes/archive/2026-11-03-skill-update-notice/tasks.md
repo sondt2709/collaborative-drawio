@@ -12,4 +12,4 @@
 
 - [x] 3.1 `npm run typecheck`, `npm run build` and `npm test` pass
 - [x] 3.2 The built CLI in a temporary project shows `created`, `unchanged`, `updated` and the hook line
-- [ ] 3.3 `scripts/scan-sensitive.sh` passes; CI passes on the pull request
+- [x] 3.3 `scripts/scan-sensitive.sh` passes; CI passes on the pull request

@@ -311,7 +311,46 @@ export class DrawioDoc {
         p.setAttribute('y', fmt(y));
         arr.appendChild(p);
       }
-      g.appendChild(arr);
+      // draw.io writes the points before the label offset.
+      const off = elements(g).find((e) => e.tagName === 'mxPoint' && e.getAttribute('as') === 'offset');
+      if (off) g.insertBefore(arr, off);
+      else g.appendChild(arr);
+    }
+    this.format(c.el, this.indentOf(c.el));
+  }
+
+  /** The label position of an edge: geometry x (-1..1 along the path), y, and the absolute offset. */
+  edgeLabelPos(c: Cell): { x: number; y: number; offset: [number, number] } {
+    const g = firstElement(c.cell, 'mxGeometry');
+    const n = (e: Element | undefined, a: string) => Number(e?.getAttribute(a) ?? 0) || 0;
+    const off = g && elements(g).find((e) => e.tagName === 'mxPoint' && e.getAttribute('as') === 'offset');
+    return { x: n(g, 'x'), y: n(g, 'y'), offset: [n(off, 'x'), n(off, 'y')] };
+  }
+
+  /** Write the label position of an edge (y is 0). Zero values are left out, as draw.io does. */
+  setEdgeLabelPos(c: Cell, x: number, offset: [number, number]): void {
+    let g = firstElement(c.cell, 'mxGeometry');
+    if (!g) {
+      g = this.dom.createElement('mxGeometry');
+      g.setAttribute('relative', '1');
+      g.setAttribute('as', 'geometry');
+      c.cell.appendChild(g);
+    }
+    const rel = g.getAttribute('relative');
+    const as = g.getAttribute('as') ?? 'geometry';
+    // Keep the attribute order that draw.io writes: x, y, relative, as.
+    for (const a of ['x', 'y', 'relative', 'as']) g.removeAttribute(a);
+    if (x) g.setAttribute('x', fmt(x));
+    if (rel) g.setAttribute('relative', rel);
+    g.setAttribute('as', as);
+    const old = elements(g).find((e) => e.tagName === 'mxPoint' && e.getAttribute('as') === 'offset');
+    if (old) g.removeChild(old);
+    if (offset[0] || offset[1]) {
+      const p = this.dom.createElement('mxPoint');
+      if (offset[0]) p.setAttribute('x', fmt(offset[0]));
+      if (offset[1]) p.setAttribute('y', fmt(offset[1]));
+      p.setAttribute('as', 'offset');
+      g.appendChild(p);
     }
     this.format(c.el, this.indentOf(c.el));
   }

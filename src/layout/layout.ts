@@ -3,6 +3,7 @@ import type { ELK as ElkApi } from 'elkjs/lib/elk-api.js';
 import type { Geometry } from '../model/doc.js';
 import type { StyleOverride } from '../theme/render.js';
 import type { NodeKind, Theme } from '../theme/theme.js';
+import { labelSize } from '../route/label.js';
 import { lineCount, textWidth } from './text.js';
 
 export interface LNode {
@@ -30,7 +31,12 @@ export interface LEdge {
   to: string;
   /** false: the edge does not affect the placement. */
   layout?: boolean;
+  /** The edge label: the gap that the line crosses must fit it. */
+  label?: string;
 }
+
+/** The space around an edge label in a gap: 16 px on each side (room for the arrowhead). */
+const LABEL_GAP = 32;
 
 export interface LayoutInput {
   title?: string;
@@ -228,6 +234,8 @@ class Ctx {
   compound = new Set<string>();
   /** Edges that affect the placement. */
   edges: LEdge[] = [];
+  /** All edges with a label (also edges without a layout effect). */
+  labeled: LEdge[] = [];
   constructor(
     readonly theme: Theme,
     readonly geo: Map<string, Geometry>,
@@ -247,6 +255,27 @@ class Ctx {
 
   isCompound(n: LNode): boolean {
     return n.kind === 'zone' && !n.size && !n.laid && !special(n) && this.hasEndpointInside(n);
+  }
+
+  /** True when id is one of the roots or inside one of them. */
+  inAny(id: string, roots: string[]): boolean {
+    return roots.some((r) => r === id || this.isAncestor(r, id));
+  }
+
+  /**
+   * The gap between the boxes `a` and `b` (and the boxes inside them): at least
+   * `gap`, and wide enough for the label of each edge between them. `across`:
+   * the line crosses the gap horizontally, so the label width counts.
+   */
+  labelGap(a: string[], b: string[], gap: number, across: boolean): number {
+    let g = gap;
+    for (const e of this.labeled) {
+      if ((this.inAny(e.from, a) && this.inAny(e.to, b)) || (this.inAny(e.from, b) && this.inAny(e.to, a))) {
+        const s = labelSize(e.label!);
+        g = Math.max(g, Math.ceil((across ? s.w : s.h) + LABEL_GAP));
+      }
+    }
+    return g;
   }
 
   isAncestor(a: string, b: string): boolean {
@@ -298,23 +327,28 @@ async function rowsBlock(ctx: Ctx, kids: LNode[], rows: RowItem[][], gap: number
   let y = 0;
   let width = 0;
   const bands: LNode[] = [];
-  for (const row of all) {
+  const rowIds = all.map((row) => row.flat().filter((id) => byId.has(id)));
+  for (const [ri, row] of all.entries()) {
     let x = 0;
     let rowH = 0;
     const cols: Array<{ ids: string[]; w: number; h: number }> = [];
+    let prev: string[] | undefined;
     for (const item of row) {
       const ids = (Array.isArray(item) ? item : [item]).filter((id) => byId.has(id));
       if (!ids.length) continue;
+      if (prev) x += ctx.labelGap(prev, ids, gap, true) - gap;
       const colW = Math.max(...ids.map((id) => size.get(id)!.w));
       let cy = y;
-      for (const id of ids) {
+      for (const [i, id] of ids.entries()) {
         const sz = size.get(id)!;
+        if (i > 0) cy += ctx.labelGap([ids[i - 1]], [id], gap, false) - gap;
         ctx.geo.set(id, { x, y: cy, w: sz.w, h: sz.h });
         cy += sz.h + gap;
       }
       cols.push({ ids, w: colW, h: cy - gap - y });
       rowH = Math.max(rowH, cy - gap - y);
       x += colW + gap;
+      prev = ids;
     }
     for (const c of cols) {
       const nodes = c.ids.map((id) => byId.get(id)!);
@@ -331,7 +365,8 @@ async function rowsBlock(ctx: Ctx, kids: LNode[], rows: RowItem[][], gap: number
     width = Math.max(width, x - gap);
     // A row of headings (notes only) sits close to the row below it.
     const headings = cols.length > 0 && cols.every((c) => c.ids.every((id) => byId.get(id)!.kind === 'note'));
-    y += rowH + (headings ? Math.round(gap / 2) : gap);
+    const next = rowIds[ri + 1] ?? [];
+    y += rowH + (headings ? Math.round(gap / 2) : ctx.labelGap(rowIds[ri], next, gap, false));
   }
   for (const b of bands) ctx.geo.get(b.id)!.w = Math.max(ctx.geo.get(b.id)!.w, width);
   for (const k of kids) {
@@ -445,14 +480,14 @@ async function precompute(ctx: Ctx, nodes: LNode[]): Promise<void> {
   }
 }
 
-function elkOptions(theme: Theme, direction: 'down' | 'right'): Record<string, string> {
+function elkOptions(theme: Theme, direction: 'down' | 'right', layerGap = theme.sizes.page.layerGap): Record<string, string> {
   const p = theme.sizes.page;
   return {
     'elk.algorithm': 'layered',
     'elk.direction': direction === 'right' ? 'RIGHT' : 'DOWN',
     'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
     'elk.spacing.nodeNode': String(p.nodeGap),
-    'elk.layered.spacing.nodeNodeBetweenLayers': String(p.layerGap),
+    'elk.layered.spacing.nodeNodeBetweenLayers': String(layerGap),
     'elk.spacing.edgeNode': '20',
     'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
     'elk.edgeRouting': 'ORTHOGONAL',
@@ -556,7 +591,12 @@ async function elkGroup(ctx: Ctx, members: LNode[], edges: LEdge[]): Promise<Map
     seen.add(k);
     elkEdges.push({ id: `e${elkEdges.length}`, sources: [a], targets: [b] });
   }
-  const out = (await elk.layout({ id: "root", layoutOptions: elkOptions(ctx.theme, ctx.direction), children, edges: elkEdges } as never)) as unknown as ElkOut;
+  // Direction right: the lines between layers are horizontal, so the layer gap must fit the widest label.
+  let layerGap = ctx.theme.sizes.page.layerGap;
+  if (ctx.direction === 'right') {
+    for (const e of ctx.labeled) if (lift(e.from) && lift(e.to) && lift(e.from) !== lift(e.to)) layerGap = Math.max(layerGap, Math.ceil(labelSize(e.label!).w + LABEL_GAP));
+  }
+  const out = (await elk.layout({ id: 'root', layoutOptions: elkOptions(ctx.theme, ctx.direction, layerGap), children, edges: elkEdges } as never)) as unknown as ElkOut;
   fromElk(ctx, out);
   const res = new Map<string, Geometry>();
   for (const m of members) res.set(m.id, ctx.geo.get(m.id)!);
@@ -630,6 +670,7 @@ export async function layoutDiagram(theme: Theme, input: LayoutInput): Promise<L
   const geo = new Map<string, Geometry>();
   const ctx = new Ctx(theme, geo, input.direction, input.width ?? p.maxWidth ?? 1200);
   ctx.edges = input.edges.filter((e) => e.layout !== false);
+  ctx.labeled = input.edges.filter((e) => e.label && e.from !== e.to);
   const walk = (ns: LNode[], par: string) => {
     for (const n of ns) {
       ctx.parent.set(n.id, par);

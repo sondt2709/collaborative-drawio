@@ -1,103 +1,86 @@
 ---
 name: dgm
-description: Create, read and change draw.io diagrams (.drawio) with the dgm CLI and short YAML. Use it for any diagram work in this project, and when a dgm hook message reports that a person changed a diagram.
+description: Create, read and change draw.io diagrams (.drawio) with the dgm CLI and short YAML. Use it for all diagram work in this project, and when a dgm hook message reports that a person changed a diagram.
 ---
 
 # dgm: draw.io diagrams with short YAML
 
-The `.drawio` file is the only source of truth. A person edits it in draw.io; you edit it with `dgm`, which writes the XML, style, positions and history.
+The `.drawio` file is the only source of truth. A person edits it in draw.io. You edit it with `dgm`.
 
 ## Rules
 
-1. Never read or write `.drawio` XML. Use `dgm show` to read and `dgm create` / `dgm apply` to change.
-2. Never write colors, sizes or style strings. Use `kind`, `tone`, `variant` and `icon`. dgm makes every color readable in light and dark mode.
-3. Send only the change. `dgm apply` keeps all other cells and all positions that a person gave.
-4. A hook message "dgm: a person changed these diagrams" lists the person's edits. They are recorded. Keep them: do not undo a person's edit unless the person asks.
-5. Before an apply, ask the person to save unsaved edits in draw.io. Then draw.io offers "Click here to synchronize".
-6. Read the output of each command. Fix `check` problems. For each `hint:` (a line through a box, an almost straight line, line crossings), first try another YAML order, then ports or `via`. Use `dgm render` to look at the PNG.
+1. Do not read or write `.drawio` XML. Use `dgm show`, `dgm create` and `dgm apply`.
+2. Do not write colors, sizes or style strings. Use `kind`, `tone`, `variant` and `icon`.
+3. Send only the change. Do not undo the edit of a person, unless the person asks.
+4. Before `dgm apply`, tell the person to save the diagram in draw.io.
+5. Keep edge labels short: 1 to 3 words. Put details in `sub`.
+6. Read the output of each command. Fix each `check` problem and each `hint:`. First change the YAML order or `rows`, then ports or `via`. After 3 tries, stop and tell the person about the open hints.
 
 ## Commands
 
 ```sh
-dgm create docs/arch.drawio --from spec.yaml   # or YAML on standard input; --force replaces
+dgm create docs/arch.drawio --from spec.yaml   # also YAML on standard input; opens draw.io
 dgm show docs/arch.drawio [--geometry]          # the diagram as create YAML
-dgm apply docs/arch.drawio <<'EOF'              # change: add, set, connect, move, remove
+dgm apply docs/arch.drawio <<'EOF'              # add, set, connect, move, remove
 set: {svc: {title: Order API}}
 EOF
-dgm status docs/arch.drawio [--ack]             # a person's changes since the last snapshot
-dgm log docs/arch.drawio                        # history, newest first
+dgm status docs/arch.drawio                     # the changes of a person
 dgm layout docs/arch.drawio [--keep-moved]      # place all nodes again
-dgm check docs/arch.drawio                      # raw colors, low contrast
-dgm render docs/arch.drawio --theme dark        # PNG through the draw.io app
+dgm check docs/arch.drawio                      # colors, contrast and layout hints
+dgm render docs/arch.drawio                     # PNG next to the file: look at it
+dgm export docs/arch.drawio                     # PNG for the person, in ~/Downloads
+dgm open docs/arch.drawio                       # show the diagram in draw.io
+dgm help yaml|edges|apply                       # the full reference
 ```
 
-Exit codes: 0 ok, 1 check problems, 2 invalid input (nothing changed), 3 draw.io not found.
+Exit codes: 0 ok, 1 check problems, 2 invalid input (no change), 3 draw.io not found.
 
-## Create format
+When the person asks for an image, run `dgm export` and give the path.
+
+## Create
 
 ```yaml
-title: Order system            # optional
-subtitle: One line of context  # optional
-direction: down                # down (default) or right
-rows: [[web, api], [core, db]]  # optional: page composition; [a, [b, c]] = b above c
-width: 2400                    # optional: page width
+title: Order system
+direction: down                 # or right
+rows: [[web, api], [core]]      # optional page composition
 nodes:
-  api: API gateway             # a string is a card with that title
   web: {title: Web shop, sub: Storefront, icon: monitor, tone: sky}
+  api: {title: API gateway, icon: shield}
   core:
     kind: zone
     title: Order services
-    tone: violet               # cards inside inherit the zone tone
     nodes:
       svc: {title: Order service, sub: Creates orders, icon: server}
-      queue: {kind: chip, title: Order queue}
-      tip: {kind: note, title: Orders are safe to retry.}
-  db: {kind: cylinder, title: Postgres, sub: Primary and replica, icon: database}
-  bus: {kind: band, title: Event bus for all services, icon: radio-tower, tone: teal}
+      db: {kind: cylinder, title: Postgres, icon: database}
 edges:
-  - api -> svc                         # no label
-  - "web -> api": HTTPS                # with a label
-  - {from: svc, to: db, label: SQL, kind: existing, badge: 1}
-  - "api:r -> svc:l"                   # ports: t r b l, or r@0.3 (position on the side)
-  - "svc:b -> db:t via below core": reads   # via: around a box
-  - {from: api, to: db, via: elbow, route: curved}
+  - "web -> api": HTTPS
+  - api -> svc
+  - "svc:b -> db:t": SQL         # ports t r b l
+  - {from: api, to: db, via: below core, kind: existing}
 ```
 
-Lines are straight by default (with a detour around boxes when needed). Steer a line only when a hint asks for it:
-- `via`: `elbow` (one corner), `above|below|left|right <id>` (a lane beside a box), `x=N` or `y=N` (a lane), `[x, y]` (an exact point, rare). Several: `via: [below core, x=900]`.
-- `route`: `straight` (default), `orthogonal`, `curved`. `layout: false`: the edge does not move boxes.
-- dgm recomputes points when boxes move. Points that the person dragged stay.
-
-Node keys: `kind`, `title`, `sub`, `tone`, `icon`, `variant`, `style`, `at`, `nodes` and `rows` (zone only). Ids: letters, digits, `_`, `-`; unique at all depths. Quote a title that has `,` or `:` in a `{...}` map.
-
-- kinds: `card` (default: icon, bold title, subtitle), `zone` (tinted container), `chip` (small pill), `band` (solid bar, spans the page), `note` (muted italic text), `cylinder` (database), `text`
+- kinds: `card` (default), `zone`, `chip`, `band`, `note`, `cylinder`, `text`
 - tones: `slate`, `sky`, `indigo`, `violet`, `teal`, `orange`, `rose`, `red`
 - variants: `dashed`, `muted`, `emphasis`
-- icons: Lucide names in kebab-case (lucide.dev/icons), for example `server`, `database`, `users`, `cloud`. An unknown name fails with suggestions.
-- edge kinds: `default`, `new` (bold, indigo), `existing` (thin), `dns` (dashed), `network` (teal)
-- `style` (rare): `stroke`, `fill`, `text` (a tone, `accent`, `tint`, `surface`, `ink`, `muted`), `dashed`, `bold`, `width`, `height`.
-- `at: [x, y]` fixes a position (relative to the parent). Normally leave it out.
-- Compose large diagrams with `rows` (page and zones) instead of `at`. A band in a zone divides it.
-- `dgm show --geometry` prints positions and sizes (for lanes `x=N`, `y=N`).
+- icons: Lucide names, for example `server`, `database`, `users`, `cloud`
+- edge kinds: `default`, `new`, `existing`, `dns`, `network`
+- `via`: `elbow`, `above|below|left|right <id>`, `x=N`, `y=N`. `route`: `straight`, `orthogonal`, `curved`.
 
-## Apply format
-
-Operations run in this order: add, set, connect, move, remove. If one is invalid, nothing changes.
+## Apply
 
 ```yaml
 add:
-  cache: {title: Redis, icon: database, in: core}   # in: a zone; near: a node id
-  queue2: {kind: chip, title: Retry queue, near: svc}
+  cache: {title: Redis, icon: database, in: core}   # in: a zone; near: a node
 set:
-  svc: {title: Order API, tone: indigo, sub: null}  # null removes a field
-  "a1B2c3-4": {id: stripe, kind: card, icon: credit-card}   # adopt a cell a person drew
-  "api -> svc": {label: gRPC, from: "api:r", via: above core}   # edge; "a -> b#2" = second; via: null clears
-  page: {rows: [[a, b], [c]], width: 2000}   # then run dgm layout
+  svc: {tone: indigo, sub: null}                     # null removes a field
+  "api -> svc": {label: gRPC, via: above core}
 connect:
   - "svc -> cache": reads
 move:
-  worker: {in: batch}        # a zone id or page; at: [x, y] is optional
+  cache: {in: page}
 remove: [old-node, "web -> api"]
 ```
 
-`dgm show` lists cells that a person drew as `kind: raw` with their cell id. Use `set` with `id` and `kind` to name and style them.
+To change the composition later, `set` the `rows` of `page` or of a zone, then run `dgm layout`.
+
+`dgm show` lists cells that a person drew as `kind: raw`. Run `dgm help apply` to adopt them.

@@ -2,7 +2,8 @@ import type { EdgeSpec, NodeSpec } from './dsl/parse.js';
 import type { Cell, DrawioDoc, Geometry } from './model/doc.js';
 import { fromHtmlLabel, toHtmlLabel } from './model/text.js';
 import { hasBase, getStyle } from './model/style.js';
-import { contains } from './route/geom.js';
+import { contains, type Pt } from './route/geom.js';
+import { edgePath, labelSize, placeLabel } from './route/label.js';
 import { textWidth } from './layout/text.js';
 import {
   parseOverride,
@@ -235,6 +236,31 @@ export function absBoxes(doc: DrawioDoc): Map<string, Box> {
     return b;
   };
   for (const c of cells) abs(c.id);
+  return out;
+}
+
+/** The page polyline of each edge whose path dgm can know (not draw.io's orthogonal or elbow styles). */
+export function edgeLines(doc: DrawioDoc): Array<{ id: string; ref: string; from: string; to: string; line: Pt[] }> {
+  const view = readView(doc);
+  const boxes = absBoxes(doc);
+  const out: Array<{ id: string; ref: string; from: string; to: string; line: Pt[] }> = [];
+  for (const e of view.edges) {
+    const a = boxes.get(e.from);
+    const b = boxes.get(e.to);
+    if (!a || !b || e.from === e.to) continue;
+    const st = doc.style(e.cell);
+    const es = getStyle(st, 'edgeStyle');
+    if (es && es !== 'none') continue;
+    const parent = doc.parentId(e.cell);
+    const off = parent ? boxes.get(parent) : undefined;
+    const pts: Pt[] = e.points.map(([x, y]) => [x + (off?.x ?? 0), y + (off?.y ?? 0)]);
+    const frac = (kx: string, ky: string): Pt | undefined => {
+      const x = getStyle(st, kx);
+      const y = getStyle(st, ky);
+      return x !== undefined && y !== undefined ? [Number(x), Number(y)] : undefined;
+    };
+    out.push({ id: e.id, ref: e.ref, from: e.from, to: e.to, line: edgePath(a, b, pts, frac('exitX', 'exitY'), frac('entryX', 'entryY')) });
+  }
   return out;
 }
 
@@ -520,9 +546,10 @@ export class Editor {
    * Compute the ports and points of the dgm edges from their intent, and write
    * them when they change. Legacy edges (orthogonal, written before routing
    * existed) are routed only when `force` names them or `includeLegacy` is set.
-   * Edges in `keep` keep their points (a person changed them).
+   * Edges in `keep` keep their points (a person changed them). Then it places
+   * the labels; edges in `keepLabels` keep their label position.
    */
-  routeAll(opts: { force?: Set<string>; includeLegacy?: boolean; keep?: Set<string> } = {}): string[] {
+  routeAll(opts: { force?: Set<string>; includeLegacy?: boolean; keep?: Set<string>; keepLabels?: Set<string> } = {}): string[] {
     const d = this.doc;
     const view = readView(d);
     const boxes = absBoxes(d);
@@ -552,7 +579,31 @@ export class Editor {
       if (d.style(c) !== style) d.setStyle(c, style);
       if (!samePts) d.setEdgePoints(c, pts);
     }
+    this.placeLabels(opts.keepLabels);
     return changed;
+  }
+
+  /**
+   * Place the label of each dgm edge on a free part of its line, in edge
+   * order. Edges in `keep` keep their label position (a person dragged it).
+   */
+  placeLabels(keep?: Set<string>): void {
+    const d = this.doc;
+    const view = readView(d);
+    const boxes = absBoxes(d);
+    const obs = obstacles(d, view, boxes, this.theme).map((o) => o.box);
+    const placed: Box[] = [];
+    const lines = new Map(edgeLines(d).map((l) => [l.id, l.line]));
+    for (const e of view.edges) {
+      const text = fromHtmlLabel(d.label(e.cell));
+      const line = lines.get(e.id);
+      if (!e.kind || !text || !line) continue;
+      if (keep?.has(e.id)) continue;
+      const p = placeLabel(line, labelSize(text), obs, placed);
+      placed.push(p.box);
+      const old = d.edgeLabelPos(e.cell);
+      if (old.x !== p.x || old.y !== 0 || old.offset[0] !== p.offset[0] || old.offset[1] !== p.offset[1]) d.setEdgeLabelPos(e.cell, p.x, p.offset);
+    }
   }
 
   /** Write or remove the title and subtitle cells. */

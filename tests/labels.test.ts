@@ -15,34 +15,34 @@ import { dgm, drawioSave, read, tmpDir, write } from './helpers.js';
 const theme = loadTheme('pro', join(tmpDir(), 'x.drawio'), { DGM_CONFIG_DIR: '/nonexistent' });
 
 /** Synthetic diagram with short gaps and long labels. */
-export const LABELS = `title: Order platform
+export const LABELS = `title: Shop checkout
 nodes:
-  users: {title: Shoppers, sub: Browser and app, icon: users}
-  app:
+  buyers: {title: Buyers, sub: Mobile app, icon: smartphone}
+  shop:
     kind: zone
-    title: App cluster
+    title: Shop cluster
     rows:
-      - [gw]
-      - [web, api, auth]
-      - [intake, mq, worker]
+      - [lb]
+      - [cart, checkout, pay]
+      - [stock, kafka, mailer]
     nodes:
-      gw: {title: Gateway, sub: TLS and routing, icon: route}
-      web: {title: Web shop, sub: Storefront and BFF, icon: monitor}
-      api: {title: Order API, sub: NestJS, icon: server}
-      auth: {title: Auth server, sub: Realms for shop and admin, icon: key}
-      intake: {title: Order intake, sub: Queue consumers, icon: inbox}
-      mq: {kind: cylinder, title: RabbitMQ, sub: queue orders.events, icon: mail}
-      worker: {title: Payment worker, sub: Consumer and hourly job, icon: cog}
+      lb: {title: Load balancer, sub: Health checks, icon: network}
+      cart: {title: Cart service, sub: Keeps baskets, icon: shopping-cart}
+      checkout: {title: Checkout, sub: Go service, icon: server}
+      pay: {title: Payment gateway, sub: Card and wallet payments, icon: credit-card}
+      stock: {title: Stock sync, sub: Nightly import, icon: package}
+      kafka: {kind: cylinder, title: Kafka, sub: topic shop.orders, icon: database}
+      mailer: {title: Mail worker, sub: Receipts and reminders, icon: mail}
 edges:
-  - "users -> gw": HTTPS 443
-  - gw -> web
-  - "gw -> api": /api
-  - "gw -> auth": /auth
-  - "web -> api": BFF, Bearer token
-  - "api -> auth": admin API
-  - "api -> mq": order events
-  - "intake -> mq": order.charge
-  - "worker -> mq": consume
+  - "buyers -> lb": TLS 1.3
+  - lb -> cart
+  - "lb -> checkout": /checkout
+  - "lb -> pay": /pay
+  - "cart -> checkout": basket snapshot
+  - "checkout -> pay": charge
+  - "checkout -> kafka": order placed
+  - "stock -> kafka": stock levels
+  - "mailer -> kafka": subscribe
 `;
 
 type Pt = [number, number];
@@ -164,7 +164,7 @@ describe('gaps for labels', () => {
     expect((await dgm(dir, ['create', 'a.drawio', '--from', 's.yaml'])).code).toBe(0);
     return view(DrawioDoc.parse(read(dir, 'a.drawio'))).byId;
   };
-  const LONG = 'BFF calls with a Bearer token';
+  const LONG = 'basket snapshot with all lines';
 
   it('widens the column gap for a label', async () => {
     const n = await geo(`nodes:\n  z: {kind: zone, rows: [[a, b]], nodes: {a: A, b: B}}\nedges:\n  - "a -> b": ${LONG}\n`);
@@ -195,7 +195,7 @@ describe('labels that a person dragged', () => {
     await dgm(dir, ['create', 'a.drawio', '--from', 'spec.yaml']);
     const file = `${dir}/a.drawio`;
     const edgeOf = (root: Element): Element =>
-      Array.from(root.getElementsByTagName('mxCell')).find((c) => c.getAttribute('source') === 'web' && c.getAttribute('target') === 'api')!;
+      Array.from(root.getElementsByTagName('mxCell')).find((c) => c.getAttribute('source') === 'cart' && c.getAttribute('target') === 'checkout')!;
     drawioSave(file, (root, doc) => {
       const g = edgeOf(root).getElementsByTagName('mxGeometry')[0];
       for (const p of Array.from(g.getElementsByTagName('mxPoint'))) if (p.getAttribute('as') === 'offset') g.removeChild(p);
@@ -206,14 +206,14 @@ describe('labels that a person dragged', () => {
       g.appendChild(off);
     });
     const st = await dgm(dir, ['status', 'a.drawio']);
-    expect(st.out).toContain('~ edge web -> api label moved in draw.io');
-    const r = await dgm(dir, ['apply', 'a.drawio'], 'add:\n  cache: {title: Redis, in: app}\n');
+    expect(st.out).toContain('~ edge cart -> checkout label moved in draw.io');
+    const r = await dgm(dir, ['apply', 'a.drawio'], 'add:\n  cache: {title: Redis, in: shop}\n');
     expect(r.code).toBe(0);
     const doc = DrawioDoc.parse(read(dir, 'a.drawio'));
-    const e = readView(doc).edges.find((x) => x.ref === 'web -> api')!;
+    const e = readView(doc).edges.find((x) => x.ref === 'cart -> checkout')!;
     expect(doc.edgeLabelPos(e.cell)).toEqual({ x: 0.5, y: 0, offset: [0, -20] });
     // Other labels are still placed by dgm.
-    const other = readView(doc).edges.find((x) => x.ref === 'api -> auth')!;
+    const other = readView(doc).edges.find((x) => x.ref === 'checkout -> pay')!;
     expect(doc.edgeLabelPos(other.cell).x).not.toBe(0.5);
   });
 });
@@ -221,10 +221,10 @@ describe('labels that a person dragged', () => {
 describe('label check hint', () => {
   it('reports a label that overlaps a box', async () => {
     const dir = tmpDir();
-    write(dir, 's.yaml', 'nodes:\n  a: {title: A, at: [40, 40]}\n  b: {title: B, at: [270, 40]}\nedges:\n  - "a -> b": calls with a Bearer token\n');
+    write(dir, 's.yaml', 'nodes:\n  a: {title: A, at: [40, 40]}\n  b: {title: B, at: [270, 40]}\nedges:\n  - "a -> b": reads the price list\n');
     await dgm(dir, ['create', 'a.drawio', '--from', 's.yaml']);
     const r = await dgm(dir, ['check', 'a.drawio']);
-    expect(r.out).toContain('hint: label "calls with a Bearer token" of edge a -> b overlaps a, b. Shorten the label, or run dgm layout');
+    expect(r.out).toContain('hint: label "reads the price list" of edge a -> b overlaps a, b. Shorten the label, or run dgm layout');
     expect(r.code).toBe(0);
   });
 

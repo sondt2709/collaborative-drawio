@@ -14,7 +14,7 @@ The `.drawio` file is the only source of truth. A person edits it in draw.io. Yo
 3. Send only the change. Do not undo the edit of a person, unless the person asks.
 4. Before `dgm apply`, tell the person to save the diagram in draw.io.
 5. Keep edge labels short: 1 to 3 words. Put details in `sub`.
-6. Read the output of each command. Fix each `check` problem and each `hint:`. First change the YAML order or `rows`, then ports or `via`.
+6. Read the output of each command. Fix each `check` problem and each `hint:`. First change the YAML order or `rows`, then ports or `via`. After 3 tries, stop and tell the person about the open hints.
 
 ## Commands
 
@@ -80,5 +80,7 @@ move:
   cache: {in: page}
 remove: [old-node, "web -> api"]
 ```
+
+To change the composition later, `set` the `rows` of `page` or of a zone, then run `dgm layout`.
 
 `dgm show` lists cells that a person drew as `kind: raw`. Run `dgm help apply` to adopt them.

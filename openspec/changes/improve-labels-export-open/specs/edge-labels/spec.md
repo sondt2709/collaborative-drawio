@@ -5,8 +5,8 @@ On `dgm create` and `dgm layout`, the layout SHALL make the gap between two adja
 The label width SHALL come from the text width table at font size 11.
 
 #### Scenario: Wide label between two cards in a row
-- **WHEN** a zone has `rows: [[web, api]]` and the edge `"web -> api": BFF, Bearer token`
-- **THEN** after `dgm create`, the gap between `web` and `api` is at least the label width plus 32 px
+- **WHEN** a zone has `rows: [[cart, checkout]]` and the edge `"cart -> checkout": basket snapshot`
+- **THEN** after `dgm create`, the gap between `cart` and `checkout` is at least the label width plus 32 px
 
 #### Scenario: No label, no change
 - **WHEN** the edge between two adjacent columns has no label
@@ -33,8 +33,8 @@ dgm SHALL write the position into the edge geometry: `x` along the path from -1 
 When the label geometry of an edge differs from the last agent snapshot, dgm SHALL keep that label position on `apply` and `layout`.
 
 #### Scenario: Dragged label stays
-- **WHEN** a person drags the label of `web -> api` in draw.io and saves, and then the agent runs `dgm apply` that adds a node
-- **THEN** the label geometry of `web -> api` is unchanged
+- **WHEN** a person drags the label of `cart -> checkout` in draw.io and saves, and then the agent runs `dgm apply` that adds a node
+- **THEN** the label geometry of `cart -> checkout` is unchanged
 
 ### Requirement: Label overlap hint
 `dgm check` SHALL print `hint: label "<text>" of edge <ref> overlaps <ids>. Shorten the label, or run dgm layout` for each edge label whose box overlaps a node box. The hint SHALL NOT change the exit code.

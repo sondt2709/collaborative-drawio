@@ -1,6 +1,6 @@
 ## 1. Failing test first
 
-- [x] 1.1 Add a synthetic fixture (Shoppers, Gateway, Web shop, Order API, Auth server, RabbitMQ, Payment worker) and a test that no edge label box overlaps a node box. Run it on the base commit and keep the failure output.
+- [x] 1.1 Add a synthetic fixture (a shop: Buyers, Load balancer, Cart service, Checkout, Payment gateway, Kafka, Mail worker) and a test that no edge label box overlaps a node box. Run it on the base commit and keep the failure output.
 
 ## 2. Label geometry
 
@@ -46,8 +46,8 @@
 
 ## 8. Verification
 
-- [ ] 8.1 `npm run typecheck`, `npm test`, `npm run build`
-- [ ] 8.2 Export the fixture before and after; compare the PNG files
-- [ ] 8.3 Open the fixture in a separate draw.io profile (CDP) and take a screenshot to confirm the label positions
-- [ ] 8.4 Run `dgm export` to the real `~/Downloads`; check the name and the 40 px border
-- [ ] 8.5 Let one subagent draw the fixture with the new skill only
+- [x] 8.1 `npm run typecheck`, `npm test`, `npm run build`
+- [x] 8.2 Export the fixture before and after; compare the PNG files
+- [x] 8.3 Open the fixture in a separate draw.io profile (CDP) and take a screenshot to confirm the label positions
+- [x] 8.4 Run `dgm export` to the real `~/Downloads`; check the name and the 40 px border
+- [x] 8.5 Let one subagent draw the fixture with the new skill only

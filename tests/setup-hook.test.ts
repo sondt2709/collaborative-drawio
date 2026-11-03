@@ -4,6 +4,9 @@ import { describe, expect, it } from 'vitest';
 import { byId, dgm, drawioSave, read, tmpDir, write, SMALL } from './helpers.js';
 
 const ROOT = join(import.meta.dirname, '..');
+const PACKAGE_SKILL = readFileSync(join(ROOT, 'skill/SKILL.md'), 'utf8');
+const VERSION = (JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { version: string }).version;
+const SKILL_LINE = 'skill: .claude/skills/dgm/SKILL.md';
 
 describe('skill', () => {
   it('has fewer than 4,500 characters and names the rules', () => {
@@ -38,6 +41,46 @@ describe('dgm setup', () => {
     expect(r.out).toContain('already there');
     const s = JSON.parse(read(dir, '.claude/settings.json'));
     expect(s.hooks.UserPromptSubmit).toHaveLength(1);
+  });
+
+  it('reports the skill state: created, unchanged, updated', async () => {
+    const dir = tmpDir();
+    expect((await dgm(dir, ['setup'])).out).toContain(`${SKILL_LINE} (created)`);
+    expect((await dgm(dir, ['setup'])).out).toContain(`${SKILL_LINE} (unchanged)`);
+    write(dir, '.claude/skills/dgm/SKILL.md', 'old skill\n');
+    expect((await dgm(dir, ['setup'])).out).toContain(`${SKILL_LINE} (updated)`);
+    expect(read(dir, '.claude/skills/dgm/SKILL.md')).toBe(PACKAGE_SKILL);
+  });
+});
+
+describe('dgm hook run: skill state', () => {
+  const OLD = `dgm: .claude/skills/dgm/SKILL.md is not the skill of dgm ${VERSION}. Run \`dgm setup\` to update it.`;
+
+  it('reports an old project skill and does not change it', async () => {
+    const dir = tmpDir();
+    await dgm(dir, ['setup']);
+    write(dir, '.claude/skills/dgm/SKILL.md', 'old skill\n');
+    const r = await dgm(dir, ['hook', 'run'], JSON.stringify({ cwd: dir }));
+    expect(r).toEqual({ code: 0, out: OLD, err: '' });
+    expect(read(dir, '.claude/skills/dgm/SKILL.md')).toBe('old skill\n');
+  });
+
+  it('prints the skill line before the diagram changes', async () => {
+    const dir = tmpDir();
+    await dgm(dir, ['setup']);
+    expect((await dgm(dir, ['create', 'arch.drawio'], SMALL)).code).toBe(0);
+    write(dir, '.claude/skills/dgm/SKILL.md', 'old skill\n');
+    drawioSave(join(dir, 'arch.drawio'), (root) => byId(root, 'svc')!.setAttribute('label', 'Order API'));
+    const lines = (await dgm(dir, ['hook', 'run'], JSON.stringify({ cwd: dir }))).out.split('\n');
+    expect(lines[0]).toBe(OLD);
+    expect(lines.slice(1).join('\n')).toContain('~ svc.title "Order Service" -> "Order API"');
+  });
+
+  it('prints nothing for a current skill or no skill', async () => {
+    const dir = tmpDir();
+    expect((await dgm(dir, ['hook', 'run'], JSON.stringify({ cwd: dir }))).out).toBe('');
+    await dgm(dir, ['setup']);
+    expect((await dgm(dir, ['hook', 'run'], JSON.stringify({ cwd: dir }))).out).toBe('');
   });
 });
 

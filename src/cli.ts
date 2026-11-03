@@ -15,7 +15,7 @@ import { hookRun, setup } from './commands/setup.js';
 import { show } from './commands/show.js';
 import { log, status } from './commands/status.js';
 import { DgmError, EXIT, ValidationError } from './errors.js';
-import { PACKAGE_ROOT } from './paths.js';
+import { PACKAGE_ROOT, packageVersion } from './paths.js';
 
 const HELP = `dgm: edit draw.io diagrams with short YAML. The .drawio file stays the only source of truth.
 
@@ -52,14 +52,6 @@ const HELP_TOPICS = ['yaml', 'edges', 'apply'];
 
 const COMMANDS = ['help', 'create', 'apply', 'show', 'status', 'log', 'layout', 'check', 'open', 'export', 'render', 'setup', 'hook'];
 
-function version(): string {
-  try {
-    return (JSON.parse(readFileSync(join(PACKAGE_ROOT, 'package.json'), 'utf8')) as { version: string }).version;
-  } catch {
-    return 'unknown';
-  }
-}
-
 export async function run(argv: string[], io: IO): Promise<number> {
   let parsed;
   try {
@@ -89,7 +81,7 @@ export async function run(argv: string[], io: IO): Promise<number> {
   const { values: o, positionals: pos } = parsed;
   const [cmd, ...args] = pos;
   if (o.version) {
-    io.out(version());
+    io.out(packageVersion());
     return EXIT.ok;
   }
   if (o.help || !cmd) {

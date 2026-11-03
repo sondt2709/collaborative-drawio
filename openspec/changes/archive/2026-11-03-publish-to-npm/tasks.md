@@ -19,4 +19,4 @@
 - [x] 4.1 `npm run typecheck`, `npm run build` and `npm test` pass
 - [x] 4.2 Install the packed tarball into a temporary prefix; `dgm --help` and `dgm create` with `examples/order-system.yaml` work
 - [x] 4.3 `scripts/scan-sensitive.sh` passes
-- [ ] 4.4 CI passes on the pull request, including the dry run
+- [x] 4.4 CI passes on the pull request, including the dry run

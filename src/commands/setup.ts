@@ -1,12 +1,25 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { DgmError } from '../errors.js';
 import { DrawioDoc } from '../model/doc.js';
-import { PACKAGE_ROOT } from '../paths.js';
+import { PACKAGE_ROOT, packageVersion } from '../paths.js';
 import { ackHuman } from '../track/track.js';
 import { abs, type IO } from './common.js';
 
 export const HOOK_COMMAND = 'dgm hook run';
+
+const SKILL_PATH = join('.claude', 'skills', 'dgm', 'SKILL.md');
+
+function packageSkill(): string {
+  return readFileSync(join(PACKAGE_ROOT, 'skill', 'SKILL.md'), 'utf8');
+}
+
+/** The project skill compared with the skill of the installed dgm. */
+export function skillState(root: string): 'absent' | 'current' | 'old' {
+  const file = join(root, SKILL_PATH);
+  if (!existsSync(file)) return 'absent';
+  return readFileSync(file, 'utf8') === packageSkill() ? 'current' : 'old';
+}
 
 interface HookEntry {
   matcher?: string;
@@ -31,10 +44,12 @@ export function mergeHook(settings: Record<string, unknown>): { settings: Record
 export function setup(io: IO, dir: string | undefined): number {
   const root = abs(io, dir ?? '.');
   if (!existsSync(root) || !statSync(root).isDirectory()) throw new DgmError(`${dir} is not a folder`);
-  const skillDir = join(root, '.claude', 'skills', 'dgm');
-  mkdirSync(skillDir, { recursive: true });
-  copyFileSync(join(PACKAGE_ROOT, 'skill', 'SKILL.md'), join(skillDir, 'SKILL.md'));
-  io.out('skill: .claude/skills/dgm/SKILL.md');
+  const state = skillState(root);
+  if (state !== 'current') {
+    mkdirSync(join(root, '.claude', 'skills', 'dgm'), { recursive: true });
+    writeFileSync(join(root, SKILL_PATH), packageSkill());
+  }
+  io.out(`skill: .claude/skills/dgm/SKILL.md (${{ absent: 'created', old: 'updated', current: 'unchanged' }[state]})`);
 
   const settingsPath = join(root, '.claude', 'settings.json');
   let settings: Record<string, unknown> = {};
@@ -103,6 +118,13 @@ export async function hookRun(io: IO): Promise<number> {
       }
     } catch {
       // Use the process folder.
+    }
+    try {
+      if (skillState(cwd) === 'old') {
+        io.out(`dgm: .claude/skills/dgm/SKILL.md is not the skill of dgm ${packageVersion()}. Run \`dgm setup\` to update it.`);
+      }
+    } catch {
+      // An unreadable skill must not block the prompt.
     }
     const blocks: string[] = [];
     for (const file of findTracked(cwd)) {

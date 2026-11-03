@@ -72,6 +72,8 @@ Then, in each project where an agent edits diagrams:
 dgm setup        # installs .claude/skills/dgm/SKILL.md and the UserPromptSubmit hook
 ```
 
+After you update dgm (`npm install -g collaborative-drawio`), run `dgm setup` again in each project. It prints `(updated)` when the skill changed. Until then, the hook tells the agent that the project skill is old.
+
 To remove it, delete `.claude/skills/dgm/` and the `dgm hook run` entry in `.claude/settings.json`.
 
 ## Quick start

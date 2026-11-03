@@ -1,0 +1,41 @@
+{
+  "name": "collaborative-drawio",
+  "version": "0.0.0-development",
+  "description": "dgm: a command line tool for AI agents and people who edit the same draw.io diagram",
+  "license": "MIT",
+  "author": "Son Duong",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sondt2709/collaborative-drawio.git"
+  },
+  "type": "module",
+  "bin": {
+    "dgm": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "themes",
+    "skill"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && chmod +x dist/cli.js",
+    "test": "vitest run",
+    "dev": "tsx src/cli.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@xmldom/xmldom": "^0.9.12",
+    "elkjs": "^0.12.1",
+    "lucide": "^1.67.0",
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}

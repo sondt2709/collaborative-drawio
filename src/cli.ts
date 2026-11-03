@@ -1,0 +1,167 @@
+#!/usr/bin/env node
+import { readFileSync, realpathSync } from 'node:fs';
+import { join } from 'node:path';
+import { parseArgs } from 'node:util';
+import { fileURLToPath } from 'node:url';
+import { apply } from './commands/apply.js';
+import { check } from './commands/check.js';
+import type { IO } from './commands/common.js';
+import { create } from './commands/create.js';
+import { layout } from './commands/layout.js';
+import { render } from './commands/render.js';
+import { hookRun, setup } from './commands/setup.js';
+import { show } from './commands/show.js';
+import { log, status } from './commands/status.js';
+import { DgmError, EXIT, ValidationError } from './errors.js';
+import { PACKAGE_ROOT } from './paths.js';
+
+const HELP = `dgm: edit draw.io diagrams with short YAML. The .drawio file stays the only source of truth.
+
+Usage: dgm <command> [options]
+
+Commands:
+  create <file> [--from <yaml>] [--force]   Write a new diagram from YAML (standard input or --from)
+  apply <file> [--from <yaml>]              Change a diagram: add, set, connect, move, remove
+  show <file> [--geometry]                  Print the diagram as YAML (the create format)
+  status <file> [--ack]                     Print the changes that a person made since the last snapshot
+  log <file>                                List the history, newest first
+  layout <file> [--keep-moved]              Place all nodes again
+  check <file>                              Report raw colors and low text contrast
+  render <file> [--theme light|dark] [--format png|svg] [--scale <n>] [--out <path>]
+                                            Export with the draw.io desktop CLI
+  setup [<project-dir>]                     Install the Claude Code skill and hook in a project
+  hook run                                  Hook entry point (reads the hook JSON on standard input)
+
+Options:
+  -h, --help       Show this help
+  -v, --version    Show the version
+
+Exit codes: 0 success, 1 check problems, 2 invalid input, 3 draw.io not found or export failed.
+`;
+
+const COMMANDS = ['create', 'apply', 'show', 'status', 'log', 'layout', 'check', 'render', 'setup', 'hook'];
+
+function version(): string {
+  try {
+    return (JSON.parse(readFileSync(join(PACKAGE_ROOT, 'package.json'), 'utf8')) as { version: string }).version;
+  } catch {
+    return 'unknown';
+  }
+}
+
+export async function run(argv: string[], io: IO): Promise<number> {
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args: argv,
+      allowPositionals: true,
+      strict: true,
+      options: {
+        help: { type: 'boolean', short: 'h' },
+        version: { type: 'boolean', short: 'v' },
+        force: { type: 'boolean' },
+        from: { type: 'string' },
+        geometry: { type: 'boolean' },
+        ack: { type: 'boolean' },
+        'keep-moved': { type: 'boolean' },
+        theme: { type: 'string' },
+        format: { type: 'string' },
+        scale: { type: 'string' },
+        out: { type: 'string' },
+      },
+    });
+  } catch (e) {
+    io.err(`dgm: ${(e as Error).message}`);
+    return EXIT.invalid;
+  }
+  const { values: o, positionals: pos } = parsed;
+  const [cmd, ...args] = pos;
+  if (o.version) {
+    io.out(version());
+    return EXIT.ok;
+  }
+  if (o.help || !cmd) {
+    io.out(HELP.trimEnd());
+    return cmd || o.help ? EXIT.ok : EXIT.invalid;
+  }
+  if (!COMMANDS.includes(cmd)) {
+    io.err(`dgm: unknown command "${cmd}". Run dgm --help.`);
+    return EXIT.invalid;
+  }
+  const needFile = (): string => {
+    if (!args[0]) throw new DgmError(`dgm ${cmd}: give the .drawio file`);
+    return args[0];
+  };
+  try {
+    switch (cmd) {
+      case 'create':
+        return await create(io, needFile(), { force: o.force, from: o.from });
+      case 'apply':
+        return await apply(io, needFile(), { from: o.from });
+      case 'show':
+        return show(io, needFile(), { geometry: o.geometry });
+      case 'status':
+        return status(io, needFile(), { ack: o.ack });
+      case 'log':
+        return log(io, needFile());
+      case 'layout':
+        return await layout(io, needFile(), { keepMoved: o['keep-moved'] });
+      case 'check':
+        return check(io, needFile());
+      case 'render':
+        return render(io, needFile(), { theme: o.theme, format: o.format, scale: o.scale, out: o.out });
+      case 'setup':
+        return setup(io, args[0]);
+      case 'hook':
+        if (args[0] !== 'run') throw new DgmError('usage: dgm hook run');
+        return await hookRun(io);
+    }
+  } catch (e) {
+    if (e instanceof ValidationError) {
+      for (const p of e.problems) io.err(`error: ${p}`);
+      io.err('No file was changed.');
+      return e.code;
+    }
+    if (e instanceof DgmError) {
+      io.err(`dgm: ${e.message}`);
+      return e.code;
+    }
+    io.err(`dgm: internal error: ${(e as Error).stack ?? e}`);
+    return EXIT.invalid;
+  }
+  return EXIT.invalid;
+}
+
+async function readStdin(): Promise<string | undefined> {
+  if (process.stdin.isTTY) return undefined;
+  const chunks: Buffer[] = [];
+  for await (const c of process.stdin) chunks.push(c as Buffer);
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+function isMain(): boolean {
+  try {
+    return realpathSync(process.argv[1] ?? '') === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isMain()) {
+  const io: IO = {
+    cwd: process.cwd(),
+    env: process.env,
+    stdin: readStdin,
+    out: (l) => process.stdout.write(`${l}\n`),
+    err: (l) => process.stderr.write(`${l}\n`),
+  };
+  run(process.argv.slice(2), io).then(
+    (code) => {
+      process.exitCode = code;
+    },
+    (e) => {
+      process.stderr.write(`dgm: ${(e as Error).message}\n`);
+      process.exitCode = EXIT.invalid;
+    },
+  );
+}

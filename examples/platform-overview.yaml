@@ -1,0 +1,58 @@
+# Synthetic example: a larger diagram in the pro style.
+title: Video platform
+subtitle: Creators upload videos, viewers watch them. All colors have a light value and a dark value.
+nodes:
+  creators: {title: Creators, sub: Upload studio, icon: clapperboard, tone: sky}
+  viewers: {title: Viewers, sub: Web and TV apps, icon: tv, tone: sky}
+  edge:
+    kind: zone
+    title: Edge
+    tone: teal
+    nodes:
+      auth: {title: Sign-in, sub: OAuth and sessions, icon: key-round}
+      cdn: {title: CDN, sub: Video segments, icon: globe}
+  apps:
+    kind: zone
+    title: Streaming services
+    tone: indigo
+    variant: dashed
+    nodes:
+      upload: {title: Upload API, sub: Resumable uploads, icon: upload}
+      playback: {title: Playback API, sub: Manifests and DRM, icon: circle-play, tone: rose}
+      catalog: {title: Catalog API, sub: Titles and search, icon: library}
+      search: {kind: chip, title: Search index}
+      flags: {kind: chip, title: Feature flags}
+      queue: {kind: chip, title: Job queue}
+      rec: {kind: chip, title: Recommendations, tone: violet}
+      idem: {kind: note, title: "Every API call is safe to retry: requests carry an id."}
+  bus: {kind: band, title: Event bus. Every service publishes its events here., icon: radio-tower, tone: teal}
+  media:
+    kind: zone
+    title: Media processing
+    tone: violet
+    nodes:
+      transcode: {title: Transcoder, sub: HLS and DASH renditions, icon: film}
+      thumbs: {title: Thumbnailer, sub: Posters and previews, icon: image}
+  data:
+    kind: zone
+    title: Storage
+    tone: orange
+    nodes:
+      catdb: {kind: cylinder, title: Catalog DB, sub: Titles and rights, icon: database}
+      blobs: {kind: cylinder, title: Media store, sub: Source and renditions, icon: hard-drive}
+  insights:
+    kind: zone
+    title: Analytics
+    tone: rose
+    nodes:
+      events: {title: View events, sub: Watch time per title, icon: chart-line}
+      reports: {title: Reports, sub: Daily creator stats, icon: file-chart-column}
+edges:
+  - {from: viewers, to: cdn, label: watch, kind: new, badge: 1}
+  - {from: creators, to: auth, label: sign in, kind: new, badge: 2}
+  - cdn -> playback
+  - auth -> upload
+  - {from: catalog, to: catdb, label: SQL, kind: existing}
+  - {from: upload, to: blobs, kind: existing}
+  - {from: upload, to: transcode, label: jobs, kind: network}
+  - {from: events, to: reports, kind: dns}

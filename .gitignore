@@ -10,6 +10,7 @@ tmp/
 # Dependencies and build output
 node_modules/
 dist/
+release/
 coverage/
 *.tsbuildinfo
 

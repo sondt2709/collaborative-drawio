@@ -1,0 +1,45 @@
+# dgm theme "pro". Each color is [light, dark].
+# dgm writes every color as light-dark(light,dark), so the diagram reads the
+# same in a browser and in the draw.io desktop app, in light and dark mode.
+name: pro
+font: Helvetica Neue
+
+page:
+  background: ["#FFFFFF", "#121212"]
+
+colors:
+  ink: ["#0F172A", "#F1F5F9"]
+  muted: ["#475569", "#94A3B8"]
+  surface: ["#FFFFFF", "#0F172A"]
+  onSolid: ["#FFFFFF", "#F8FAFC"]
+  onAccent: ["#FFFFFF", "#0F172A"]
+
+defaultTone: slate
+
+tones:
+  slate:  { accent: ["#475569", "#94A3B8"], tint: ["#F8FAFC", "#1E293B"], solid: ["#475569", "#334155"] }
+  sky:    { accent: ["#0369A1", "#7DD3FC"], tint: ["#F0F9FF", "#0C2A3F"], solid: ["#0369A1", "#075985"] }
+  indigo: { accent: ["#4338CA", "#A5B4FC"], tint: ["#EEF2FF", "#1E1B4B"], solid: ["#4338CA", "#3730A3"] }
+  violet: { accent: ["#7E22CE", "#D8B4FE"], tint: ["#FAF5FF", "#2E1065"], solid: ["#7E22CE", "#6B21A8"] }
+  teal:   { accent: ["#0F766E", "#5EEAD4"], tint: ["#F0FDFA", "#042F2E"], solid: ["#0F766E", "#115E59"] }
+  orange: { accent: ["#C2410C", "#FDBA74"], tint: ["#FFF7ED", "#3B1A06"], solid: ["#C2410C", "#9A3412"] }
+  rose:   { accent: ["#BE123C", "#FDA4AF"], tint: ["#FFF1F2", "#3F0A18"], solid: ["#BE123C", "#9F1239"] }
+  red:    { accent: ["#B91C1C", "#FCA5A5"], tint: ["#FEF2F2", "#450A0A"], solid: ["#B91C1C", "#991B1B"] }
+
+sizes:
+  title: { fontSize: 26, subFontSize: 13.5 }
+  card: { width: 210, minWidth: 160, maxWidth: 300, height: 64, compactHeight: 48, fontSize: 14, subFontSize: 11.5 }
+  chip: { height: 26, padding: 14, fontSize: 12 }
+  note: { height: 22, fontSize: 11.5 }
+  text: { height: 24, fontSize: 14 }
+  band: { height: 32, fontSize: 13 }
+  cylinder: { width: 180, height: 132, fontSize: 14, subFontSize: 11.5 }
+  zone: { padding: 20, header: 40, gap: 20, maxWidth: 760, minWidth: 200, fontSize: 11.5 }
+  page: { margin: 40, gap: 48, layerGap: 64, nodeGap: 40, maxWidth: 1200 }
+
+edges:
+  default:  { tone: slate, width: 1.4 }
+  new:      { tone: indigo, width: 1.6, bold: true }
+  existing: { tone: slate, width: 1.2 }
+  dns:      { tone: teal, width: 1.4, dashed: true }
+  network:  { tone: teal, width: 1.6 }

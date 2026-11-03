@@ -45,7 +45,7 @@
 
 - [x] 9.1 Synthetic examples: `examples/order-system.yaml` and `examples/platform-overview.yaml` (a large diagram in the pro style). Result: both create and render without check problems.
 - [x] 9.2 Update `README.md` (install, quick start, YAML reference) and `CLAUDE.md` (commands, architecture). Result: `scripts/scan-sensitive.sh` passes.
-- [ ] 9.3 GitHub Actions: `pr-title-check.yml`, `ci.yml` (build and test on PRs), `release.yml` (semantic-release, `npm pack` asset) and `.releaserc.json`. Result: the CI run passes on the PR.
+- [x] 9.3 GitHub Actions: `pr-title-check.yml`, `ci.yml` (build and test on PRs), `release.yml` (semantic-release, `npm pack` asset) and `.releaserc.json`. Result: the CI run passes on the PR.
 
 ## 10. Real-app verification
 

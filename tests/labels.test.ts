@@ -216,12 +216,32 @@ describe('labels that a person dragged', () => {
     const other = readView(doc).edges.find((x) => x.ref === 'checkout -> pay')!;
     expect(doc.edgeLabelPos(other.cell).x).not.toBe(0.5);
   });
+
+  it('keeps the label position on layout', async () => {
+    const dir = tmpDir();
+    write(dir, 'spec.yaml', LABELS);
+    await dgm(dir, ['create', 'a.drawio', '--from', 'spec.yaml']);
+    drawioSave(`${dir}/a.drawio`, (root, doc) => {
+      const e = Array.from(root.getElementsByTagName('mxCell')).find((c) => c.getAttribute('source') === 'stock' && c.getAttribute('target') === 'kafka')!;
+      const g = e.getElementsByTagName('mxGeometry')[0];
+      for (const p of Array.from(g.getElementsByTagName('mxPoint'))) if (p.getAttribute('as') === 'offset') g.removeChild(p);
+      g.setAttribute('x', '-0.4');
+      const off = doc.createElement('mxPoint');
+      off.setAttribute('x', '12');
+      off.setAttribute('as', 'offset');
+      g.appendChild(off);
+    });
+    expect((await dgm(dir, ['layout', 'a.drawio'])).code).toBe(0);
+    const doc = DrawioDoc.parse(read(dir, 'a.drawio'));
+    const e = readView(doc).edges.find((x) => x.ref === 'stock -> kafka')!;
+    expect(doc.edgeLabelPos(e.cell)).toEqual({ x: -0.4, y: 0, offset: [12, 0] });
+  });
 });
 
 describe('label check hint', () => {
   it('reports a label that overlaps a box', async () => {
     const dir = tmpDir();
-    write(dir, 's.yaml', 'nodes:\n  a: {title: A, at: [40, 40]}\n  b: {title: B, at: [270, 40]}\nedges:\n  - "a -> b": reads the price list\n');
+    write(dir, 's.yaml', 'nodes:\n  a: {title: A, at: [40, 40]}\n  b: {title: B, at: [260, 40]}\nedges:\n  - "a -> b": reads the price list\n');
     await dgm(dir, ['create', 'a.drawio', '--from', 's.yaml']);
     const r = await dgm(dir, ['check', 'a.drawio']);
     expect(r.out).toContain('hint: label "reads the price list" of edge a -> b overlaps a, b. Shorten the label, or run dgm layout');

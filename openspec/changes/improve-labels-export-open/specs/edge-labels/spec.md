@@ -13,7 +13,7 @@ The label width SHALL come from the text width table at font size 11.
 - **THEN** the gap is the theme gap
 
 ### Requirement: Label placement
-Each time dgm computes the route of an edge with a label, it SHALL place the label at the free point of the route that is nearest to the middle of its longest segment. A point is free when the label box does not overlap a node box (zones and bands do not count), a zone header, or a label that dgm placed before.
+Each time dgm computes the route of an edge with a label, it SHALL place the label at the free point of the route that is nearest to the middle of its longest segment. A point is free when the label box does not overlap a node box (zones and bands do not count), a zone header, the arrowhead at the target end, or a label that dgm placed before.
 When no point on the route is free, dgm SHALL try the same points with an offset beside the line. When no position is free, dgm SHALL use the middle of the longest segment.
 dgm SHALL write the position into the edge geometry: `x` along the path from -1 to 1, and the side offset as `<mxPoint as="offset">`.
 

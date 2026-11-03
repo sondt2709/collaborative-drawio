@@ -34,7 +34,7 @@ Label box: `w = textWidth(label, 11) + 8`, `h = 18`, from `src/layout/text.ts`. 
 ### D3. Label placement on the route
 New module `src/route/label.ts`: `placeLabel(path, size, obstacles, placed)`.
 1. `path` is the full polyline: the source end, the points, and the target end. An end comes from the port fraction, or from `borderPoint` toward the next point.
-2. Obstacles are all node boxes except zones and bands, plus the header strip of each zone, plus the labels that dgm placed before (in edge order).
+2. Obstacles are all node boxes except zones and bands, plus the header strip of each zone, plus a 14 px box at the target end for the arrowhead, plus the labels that dgm placed before (in edge order). The label box keeps 2 px from each obstacle.
 3. Candidates are points along the path, every 4 px. The preferred point is the middle of the longest segment. dgm picks the free candidate nearest to the preferred point.
 4. If no candidate on the line is free, dgm tries the same points with a side offset. A vertical segment gets a left or right offset of `w/2 + 6`. A horizontal segment gets an offset up or down of `h/2 + 4`.
 5. If no position is free, dgm uses the preferred point. The check reports it.

@@ -19,12 +19,16 @@ export async function buildDiagram(spec: DiagramSpec, theme: Theme, pageName: st
   const doc = DrawioDoc.create(spec.title ?? pageName);
   doc.setPageAttr(A.theme, spec.theme);
   if (spec.direction !== 'down') doc.setPageAttr(A.direction, spec.direction);
+  if (spec.rows?.length) doc.setPageAttr(A.rows, JSON.stringify(spec.rows));
+  if (spec.width) doc.setPageAttr(A.width, String(spec.width));
   const lay = await layoutDiagram(theme, {
     title: spec.title,
     subtitle: spec.subtitle,
     direction: spec.direction,
     nodes: spec.nodes.map(specToLNode),
     edges: spec.edges,
+    rows: spec.rows,
+    width: spec.width,
   });
   const ed = new Editor(doc, theme);
   ed.setTitles(spec.title, spec.subtitle, lay.title, lay.subtitle);

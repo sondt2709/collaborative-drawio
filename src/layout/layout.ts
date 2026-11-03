@@ -16,12 +16,20 @@ export interface LNode {
   at?: [number, number];
   /** Keep this size (cells that dgm does not style, or nodes a person resized). */
   size?: [number, number];
+  /** Rows of child ids; an item that is a list is a column. */
+  rows?: RowItem[][];
+  /** Set by the layout: the size and the child geometry are done. */
+  laid?: boolean;
   children: LNode[];
 }
+
+export type RowItem = string | string[];
 
 export interface LEdge {
   from: string;
   to: string;
+  /** false: the edge does not affect the placement. */
+  layout?: boolean;
 }
 
 export interface LayoutInput {
@@ -30,6 +38,10 @@ export interface LayoutInput {
   direction: 'down' | 'right';
   nodes: LNode[];
   edges: LEdge[];
+  /** Rows of top-level ids. */
+  rows?: RowItem[][];
+  /** Page width for wrapping; default: the theme value. */
+  width?: number;
 }
 
 export interface LayoutResult {
@@ -139,6 +151,7 @@ function zoneTitleWidth(theme: Theme, n: LNode): number {
  * child geometry into `geo`.
  */
 export function sizeNode(theme: Theme, n: LNode, geo: Map<string, Geometry>): Sized {
+  if (n.laid && n.size) return { w: n.size[0], h: n.size[1] };
   if (n.kind !== 'zone' || n.size) {
     const [w, h] = n.kind === 'zone' ? n.size! : leafSize(theme, n);
     if (n.kind === 'zone') for (const c of n.children) sizeNode(theme, c, geo);
@@ -213,11 +226,19 @@ class Ctx {
   /** Rows of the non-graph children of each compound zone. */
   rows = new Map<string, { size: Sized; kids: LNode[]; bands: LNode[]; at: LNode[] }>();
   compound = new Set<string>();
+  /** Edges that affect the placement. */
+  edges: LEdge[] = [];
   constructor(
     readonly theme: Theme,
     readonly geo: Map<string, Geometry>,
     readonly direction: 'down' | 'right',
+    readonly maxWidth: number,
   ) {}
+
+  /** Edges with both ends inside n (not counting n itself). */
+  edgesInside(n: LNode): LEdge[] {
+    return this.edges.filter((e) => e.from !== n.id && e.to !== n.id && this.isAncestor(n.id, e.from) && this.isAncestor(n.id, e.to));
+  }
 
   /** A zone that contains an edge endpoint (chips, notes, text and bands do not count). */
   hasEndpointInside(n: LNode): boolean {
@@ -225,7 +246,7 @@ class Ctx {
   }
 
   isCompound(n: LNode): boolean {
-    return n.kind === 'zone' && !n.size && this.hasEndpointInside(n);
+    return n.kind === 'zone' && !n.size && !n.laid && !special(n) && this.hasEndpointInside(n);
   }
 
   isAncestor(a: string, b: string): boolean {
@@ -235,6 +256,192 @@ class Ctx {
       cur = this.parent.get(cur);
     }
     return false;
+  }
+}
+
+/** A zone with its own composition: rows, or a band that divides it. */
+function special(n: LNode): boolean {
+  return n.kind === 'zone' && !n.size && (!!n.rows?.length || n.children.some((c) => c.kind === 'band'));
+}
+
+/**
+ * The size of a child of a container that is laid out alone (rows, or a
+ * segment of a zone): a zone with edges inside gets the elk layout with those
+ * edges only; other nodes get their plain size.
+ */
+async function layoutChild(ctx: Ctx, n: LNode): Promise<Sized> {
+  if (n.laid && n.size) return { w: n.size[0], h: n.size[1] };
+  if (n.kind === 'zone' && !n.size && ctx.edgesInside(n).length && ctx.isCompound(n)) {
+    const boxes = await elkGroup(ctx, [n], ctx.edgesInside(n));
+    const b = boxes.get(n.id)!;
+    return { w: b.w, h: b.h };
+  }
+  return sizeNode(ctx.theme, n, ctx.geo);
+}
+
+/**
+ * Place the children named in `rows` (and the others in one more row) relative
+ * to (0, 0). Zones in a row get the row height; zones in a column get the
+ * column width; a band spans the block.
+ */
+async function rowsBlock(ctx: Ctx, kids: LNode[], rows: RowItem[][], gap: number): Promise<Sized> {
+  const byId = new Map(kids.map((k) => [k.id, k]));
+  const listed = new Set(rows.flat(2));
+  const all: RowItem[][] = [...rows];
+  const rest = kids.filter((k) => !listed.has(k.id) && !k.at).map((k) => k.id);
+  if (rest.length) all.push(rest);
+  const size = new Map<string, Sized>();
+  for (const id of all.flat(2)) {
+    const n = byId.get(id);
+    if (n && !size.has(id)) size.set(id, await layoutChild(ctx, n));
+  }
+  let y = 0;
+  let width = 0;
+  const bands: LNode[] = [];
+  for (const row of all) {
+    let x = 0;
+    let rowH = 0;
+    const cols: Array<{ ids: string[]; w: number; h: number }> = [];
+    for (const item of row) {
+      const ids = (Array.isArray(item) ? item : [item]).filter((id) => byId.has(id));
+      if (!ids.length) continue;
+      const colW = Math.max(...ids.map((id) => size.get(id)!.w));
+      let cy = y;
+      for (const id of ids) {
+        const sz = size.get(id)!;
+        ctx.geo.set(id, { x, y: cy, w: sz.w, h: sz.h });
+        cy += sz.h + gap;
+      }
+      cols.push({ ids, w: colW, h: cy - gap - y });
+      rowH = Math.max(rowH, cy - gap - y);
+      x += colW + gap;
+    }
+    for (const c of cols) {
+      const nodes = c.ids.map((id) => byId.get(id)!);
+      if (nodes.length === 1) {
+        if (nodes[0].kind === 'zone') ctx.geo.get(nodes[0].id)!.h = rowH;
+        if (nodes[0].kind === 'band') bands.push(nodes[0]);
+        continue;
+      }
+      for (const n of nodes) if (n.kind === 'zone') ctx.geo.get(n.id)!.w = c.w;
+      // The last zone of a column fills the rest of the row height.
+      const last = nodes[nodes.length - 1];
+      if (last.kind === 'zone') ctx.geo.get(last.id)!.h += rowH - c.h;
+    }
+    width = Math.max(width, x - gap);
+    // A row of headings (notes only) sits close to the row below it.
+    const headings = cols.length > 0 && cols.every((c) => c.ids.every((id) => byId.get(id)!.kind === 'note'));
+    y += rowH + (headings ? Math.round(gap / 2) : gap);
+  }
+  for (const b of bands) ctx.geo.get(b.id)!.w = Math.max(ctx.geo.get(b.id)!.w, width);
+  for (const k of kids) {
+    if (!k.at) continue;
+    const sz = await layoutChild(ctx, k);
+    ctx.geo.set(k.id, { x: k.at[0], y: k.at[1], w: sz.w, h: sz.h });
+  }
+  return { w: r(width), h: r(Math.max(0, y - gap)) };
+}
+
+/** Lay out a zone with rows, or a zone that a band divides. Writes child geometry; returns the zone size. */
+async function layoutSpecial(ctx: Ctx, n: LNode): Promise<Sized> {
+  const { theme, geo } = ctx;
+  const z = theme.sizes.zone;
+  let contentW = 0;
+  let bottom = z.header;
+  const bands: LNode[] = [];
+  if (n.rows?.length) {
+    const block = await rowsBlock(ctx, n.children, n.rows, z.gap);
+    for (const c of n.children) {
+      const g = geo.get(c.id);
+      if (g && !c.at) {
+        g.x += z.padding;
+        g.y += z.header;
+      }
+    }
+    contentW = block.w;
+    bottom = z.header + block.h;
+  } else {
+    // Segments divided by bands.
+    const segs: LNode[][] = [[]];
+    for (const c of n.children) {
+      if (c.at) continue;
+      if (c.kind === 'band') segs.push([c], []);
+      else segs[segs.length - 1].push(c);
+    }
+    let y = z.header;
+    for (const seg of segs.filter((x) => x.length)) {
+      if (seg.length === 1 && seg[0].kind === 'band') {
+        const b = seg[0];
+        const sz = sizeNode(theme, b, geo);
+        geo.set(b.id, { x: z.padding, y, w: sz.w, h: sz.h });
+        if (!b.style?.width) bands.push(b);
+        contentW = Math.max(contentW, sz.w);
+        y += sz.h + z.gap;
+        continue;
+      }
+      const ids = new Set(seg.map((k) => k.id));
+      const toKid = (id: string): string | undefined => {
+        let cur: string | undefined = id;
+        for (let i = 0; cur && i < 100; i++) {
+          if (ids.has(cur)) return cur;
+          cur = ctx.parent.get(cur);
+        }
+        return undefined;
+      };
+      const lifted = ctx.edges.map((e) => ({ from: toKid(e.from) ?? '', to: toKid(e.to) ?? '' })).filter((e) => e.from && e.to && e.from !== e.to);
+      let segW = 0;
+      let segH = 0;
+      if (lifted.length) {
+        const pos = await layered(ctx, seg, ctx.edges, lifted, z.maxWidth - 2 * z.padding);
+        const minX = Math.min(...[...pos.values()].map((v) => v.x));
+        const minY = Math.min(...[...pos.values()].map((v) => v.y));
+        for (const k of seg) {
+          const v = pos.get(k.id)!;
+          geo.set(k.id, { x: v.x - minX + z.padding, y: v.y - minY + y, w: v.w, h: v.h });
+          segW = Math.max(segW, v.x - minX + v.w);
+          segH = Math.max(segH, v.y - minY + v.h);
+        }
+      } else {
+        const rows = flowRows(theme, seg, geo, z.maxWidth - 2 * z.padding);
+        for (const k of seg) {
+          const g = geo.get(k.id)!;
+          g.x += z.padding;
+          g.y += y;
+        }
+        segW = rows.w;
+        segH = rows.h;
+      }
+      contentW = Math.max(contentW, segW);
+      y += segH + z.gap;
+    }
+    bottom = y - z.gap;
+  }
+  let w = Math.max(z.minWidth, contentW + 2 * z.padding, zoneTitleWidth(theme, n));
+  if (n.style?.width) w = n.style.width;
+  for (const b of bands) geo.get(b.id)!.w = Math.max(geo.get(b.id)!.w, w - 2 * z.padding);
+  let right = w;
+  let bot = bottom + z.padding;
+  for (const c of n.children) {
+    if (!c.at) continue;
+    const sz = await layoutChild(ctx, c);
+    geo.set(c.id, { x: c.at[0], y: c.at[1], w: sz.w, h: sz.h });
+    right = Math.max(right, c.at[0] + sz.w + z.padding);
+    bot = Math.max(bot, c.at[1] + sz.h + z.padding);
+  }
+  let h = bot;
+  if (n.style?.height) h = n.style.height;
+  return { w: r(right), h: r(h) };
+}
+
+/** Lay out the special zones bottom-up, so the other layouts can treat them as fixed boxes. */
+async function precompute(ctx: Ctx, nodes: LNode[]): Promise<void> {
+  for (const n of nodes) {
+    await precompute(ctx, n.children);
+    if (special(n)) {
+      const sz = await layoutSpecial(ctx, n);
+      n.size = [sz.w, sz.h];
+      n.laid = true;
+    }
   }
 }
 
@@ -361,7 +568,7 @@ async function elkGroup(ctx: Ctx, members: LNode[], edges: LEdge[]): Promise<Map
  * groups are packed in rows (direction down) or in one column (direction right),
  * in YAML order.
  */
-async function layered(ctx: Ctx, nodes: LNode[], edges: LEdge[], lifted: LEdge[]): Promise<Map<string, Geometry>> {
+async function layered(ctx: Ctx, nodes: LNode[], edges: LEdge[], lifted: LEdge[], maxWidth?: number): Promise<Map<string, Geometry>> {
   const p = ctx.theme.sizes.page;
   const ids = new Set(nodes.map((n) => n.id));
   // Connected groups (union-find on top-level edges), in YAML order of their first node.
@@ -380,7 +587,7 @@ async function layered(ctx: Ctx, nodes: LNode[], edges: LEdge[], lifted: LEdge[]
     groups.get(g)!.push(n);
   }
   const out = new Map<string, Geometry>();
-  const maxW = p.maxWidth ?? 1200;
+  const maxW = maxWidth ?? ctx.maxWidth;
   let x = 0;
   let y = 0;
   let rowH = 0;
@@ -421,7 +628,8 @@ function direction(ctx: Ctx): 'down' | 'right' {
 export async function layoutDiagram(theme: Theme, input: LayoutInput): Promise<LayoutResult> {
   const p = theme.sizes.page;
   const geo = new Map<string, Geometry>();
-  const ctx = new Ctx(theme, geo, input.direction);
+  const ctx = new Ctx(theme, geo, input.direction, input.width ?? p.maxWidth ?? 1200);
+  ctx.edges = input.edges.filter((e) => e.layout !== false);
   const walk = (ns: LNode[], par: string) => {
     for (const n of ns) {
       ctx.parent.set(n.id, par);
@@ -429,11 +637,12 @@ export async function layoutDiagram(theme: Theme, input: LayoutInput): Promise<L
     }
   };
   walk(input.nodes, 'page');
-  for (const e of input.edges) {
+  for (const e of ctx.edges) {
     if (e.from === e.to) continue;
     ctx.endpoints.add(e.from);
     ctx.endpoints.add(e.to);
   }
+  await precompute(ctx, input.nodes);
 
   const ts = theme.sizes.title;
   const res: LayoutResult = { geo };
@@ -448,8 +657,23 @@ export async function layoutDiagram(theme: Theme, input: LayoutInput): Promise<L
   }
   if (input.title || input.subtitle) top += 24;
 
+  // Page rows: the agent composes the page.
+  if (input.rows?.length) {
+    // Lines run between page rows: use the layer gap, so lanes fit.
+    const block = await rowsBlock(ctx, input.nodes, input.rows, p.layerGap);
+    for (const n of input.nodes) {
+      const g = geo.get(n.id);
+      if (g && !n.at) {
+        g.x += p.margin;
+        g.y += top;
+      }
+    }
+    finishTitles(res, input, theme, block.w);
+    return res;
+  }
+
   // Lift edges to their top-level nodes, for the groups.
-  const lifted = input.edges.map((e) => ({ from: topOf(e.from, ctx.parent), to: topOf(e.to, ctx.parent) }));
+  const lifted = ctx.edges.map((e) => ({ from: topOf(e.from, ctx.parent), to: topOf(e.to, ctx.parent) }));
 
   // Split the page into segments at top-level bands.
   type Seg = { band?: LNode; nodes: LNode[] };
@@ -457,7 +681,7 @@ export async function layoutDiagram(theme: Theme, input: LayoutInput): Promise<L
   let cur: Seg = { nodes: [] };
   for (const n of input.nodes) {
     if (n.at) {
-      const boxes = ctx.isCompound(n) ? await elkGroup(ctx, [n], input.edges) : new Map([[n.id, { x: 0, y: 0, ...sizeNode(theme, n, geo) }]]);
+      const boxes = ctx.isCompound(n) ? await elkGroup(ctx, [n], ctx.edges) : new Map([[n.id, { x: 0, y: 0, ...sizeNode(theme, n, geo) }]]);
       const b = boxes.get(n.id)!;
       geo.set(n.id, { x: n.at[0], y: n.at[1], w: b.w, h: b.h });
       continue;
@@ -482,7 +706,7 @@ export async function layoutDiagram(theme: Theme, input: LayoutInput): Promise<L
       y += s.h + p.gap;
       continue;
     }
-    const pos = await layered(ctx, seg.nodes, input.edges, lifted);
+    const pos = await layered(ctx, seg.nodes, ctx.edges, lifted);
     let minX = Infinity;
     let minY = Infinity;
     for (const v of pos.values()) {
@@ -500,12 +724,17 @@ export async function layoutDiagram(theme: Theme, input: LayoutInput): Promise<L
     y += segH + p.gap / 2;
   }
   for (const b of bands) geo.get(b.id)!.w = Math.max(geo.get(b.id)!.w, contentW);
+  finishTitles(res, input, theme, contentW);
+  return res;
+}
+
+function finishTitles(res: LayoutResult, input: LayoutInput, theme: Theme, contentW: number): void {
+  const ts = theme.sizes.title;
   if (res.title) res.title.w = r(Math.max(contentW, textWidth(input.title!, ts.fontSize, true) + 8));
   if (res.subtitle) res.subtitle.w = r(Math.max(contentW, Math.min(1000, textWidth(input.subtitle!, ts.subFontSize) + 8)));
   if (res.subtitle && textWidth(input.subtitle!, ts.subFontSize) + 8 > res.subtitle.w) {
     res.subtitle.h = r(lineCount(input.subtitle!, ts.subFontSize, res.subtitle.w) * ts.subFontSize * 1.4 + 4);
   }
-  return res;
 }
 
 // ---- placement of new nodes (apply) ---------------------------------------

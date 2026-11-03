@@ -19,6 +19,7 @@ export function viewToLNodes(view: DiagramView, keep: Set<string>): LNode[] {
           sub: n.sub,
           icon: n.icon,
           style: n.style,
+          rows: n.rows,
           children: build(n.id),
         };
         if (n.kind === 'raw') l.size = [n.geo.w, n.geo.h];
@@ -53,6 +54,8 @@ export async function layout(io: IO, file: string, opts: { keepMoved?: boolean }
     direction: view.direction,
     nodes: viewToLNodes(view, keep),
     edges: view.edges.filter((e) => view.byId.has(e.from) && view.byId.has(e.to)),
+    rows: view.rows,
+    width: view.width,
   });
   const ed = new Editor(doc, theme);
   let moved = 0;

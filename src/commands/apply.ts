@@ -131,8 +131,20 @@ export function executeApply(doc: DrawioDoc, theme: Theme, ops: ApplySpec, opts:
   // ---- set
   const changedNodes: string[] = [];
   const changedEdges: string[] = [];
+  let rowsChanged = false;
   for (const op of ops.set) {
     const f = op.fields;
+    if (op.ref === 'page') {
+      if (f.rows) {
+        const top = new Set(view.nodes.filter((n) => n.parent === 'page').map((n) => n.id));
+        for (const id of f.rows.flat(2)) if (!top.has(id)) bad(`${op.path}.rows`, `"${id}" is not a top-level node`);
+      }
+      if (problems.length) continue;
+      if ('rows' in f) doc.setPageAttr(A.rows, f.rows ? JSON.stringify(f.rows) : undefined);
+      if ('width' in f) doc.setPageAttr(A.width, f.width ? String(f.width) : undefined);
+      rowsChanged = true;
+      continue;
+    }
     if (op.ref.includes('->')) {
       const e = findEdge(view, op.ref);
       if (!e) {
@@ -159,6 +171,11 @@ export function executeApply(doc: DrawioDoc, theme: Theme, ops: ApplySpec, opts:
       if ('via' in f) intent.via = f.via ?? null;
       if ('route' in f) intent.route = f.route ?? null;
       ed.setEdgeIntent(e.id, intent);
+      if ('layout' in f) {
+        c = doc.get(e.id)!;
+        doc.setAttr(c, A.layout, f.layout === false ? '0' : undefined);
+        rowsChanged = true;
+      }
       ed.renderEdge(e.id, 'badge' in f ? f.badge : undefined);
       touchedEdges.add(e.id);
       changedEdges.push(e.ref);
@@ -182,6 +199,11 @@ export function executeApply(doc: DrawioDoc, theme: Theme, ops: ApplySpec, opts:
     const iconNow = 'icon' in f ? f.icon : n.icon;
     if (kind && iconNow && !ICON_KINDS.includes(kind)) bad(`${op.path}.icon`, `kind ${kind} has no icon`);
     if (f.id && f.id !== op.ref && doc.has(f.id)) bad(`${op.path}.id`, `id "${f.id}" exists`);
+    if (f.rows) {
+      if (kind !== 'zone') bad(`${op.path}.rows`, 'only a zone has rows');
+      const kids = new Set(view.nodes.filter((x) => x.parent === op.ref).map((x) => x.id));
+      for (const id of f.rows.flat(2)) if (!kids.has(id)) bad(`${op.path}.rows`, `"${id}" is not a child of ${op.ref}`);
+    }
     if (problems.length) continue;
     let c = doc.get(op.ref)!;
     if (f.kind) {
@@ -193,6 +215,10 @@ export function executeApply(doc: DrawioDoc, theme: Theme, ops: ApplySpec, opts:
     if ('icon' in f) c = doc.setAttr(c, A.icon, f.icon ?? undefined);
     if ('variant' in f) c = doc.setAttr(c, A.variant, f.variant ?? undefined);
     if ('style' in f) c = doc.setAttr(c, A.style, serializeOverride(f.style ?? undefined));
+    if ('rows' in f) {
+      c = doc.setAttr(c, A.rows, f.rows ? JSON.stringify(f.rows) : undefined);
+      rowsChanged = true;
+    }
     if (kind && !SUB_KINDS.includes(kind) && n.sub !== undefined) f.sub = null;
     let id = op.ref;
     if (f.id && f.id !== op.ref) {
@@ -336,6 +362,7 @@ export function executeApply(doc: DrawioDoc, theme: Theme, ops: ApplySpec, opts:
   lines.push(`${plural(keptInPlace, 'node')} kept in place`);
   if (grouped.length) lines.push(`grouped text: ${grouped.join(', ')}`);
   if (kept.length) lines.push(`kept the route that a person changed: ${kept.join(', ')}`);
+  if (rowsChanged) lines.push('hint: the composition changed (rows, width or layout of an edge). Run dgm layout to place the nodes again');
   return { lines, warnings };
 }
 

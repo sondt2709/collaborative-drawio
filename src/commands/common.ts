@@ -62,6 +62,7 @@ export function specToLNode(n: NodeSpec): LNode {
     icon: n.icon,
     style: n.style,
     at: n.at,
+    rows: n.rows,
     children: n.children.map(specToLNode),
   };
 }

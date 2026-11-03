@@ -148,6 +148,13 @@ function isMain(): boolean {
 }
 
 if (isMain()) {
+  // A reader that closes the pipe early (for example `dgm show x | head`) is not an error.
+  for (const stream of [process.stdout, process.stderr]) {
+    stream.on('error', (e: NodeJS.ErrnoException) => {
+      if (e.code === 'EPIPE') process.exit(process.exitCode ?? 0);
+      throw e;
+    });
+  }
   const io: IO = {
     cwd: process.cwd(),
     env: process.env,

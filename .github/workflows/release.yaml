@@ -10,6 +10,7 @@ permissions:
   contents: write
   issues: write
   pull-requests: write
+  id-token: write # npm trusted publishing (OIDC)
 
 concurrency:
   group: release-main
@@ -73,3 +74,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx $SEMANTIC_RELEASE_PKGS semantic-release
+
+      # Trusted publishing needs npm 11.5.1 or later.
+      - name: Install npm for trusted publishing
+        if: steps.version.outputs.next != ''
+        run: npm install -g npm@11.9.0
+
+      # Runs after semantic-release, so a failed publish leaves a GitHub release
+      # whose tarball can be published by hand.
+      - name: Publish to npm
+        if: steps.version.outputs.next != ''
+        run: npm publish "release/collaborative-drawio-${{ steps.version.outputs.next }}.tgz" --access public

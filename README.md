@@ -50,11 +50,13 @@ When an AI agent edits draw.io files directly, these problems occur:
 
 You need Node.js 22 or later. For `dgm render`, you also need the [draw.io desktop app](https://github.com/jgraph/drawio-desktop/releases).
 
-Install the `.tgz` file of the [latest release](https://github.com/sondt2709/collaborative-drawio/releases):
+Install the npm package [`collaborative-drawio`](https://www.npmjs.com/package/collaborative-drawio). It gives the `dgm` command:
 
 ```sh
-npm install -g https://github.com/sondt2709/collaborative-drawio/releases/download/vX.Y.Z/collaborative-drawio-X.Y.Z.tgz
+npm install -g collaborative-drawio
 ```
+
+Each [GitHub release](https://github.com/sondt2709/collaborative-drawio/releases) also has the same package as a `.tgz` file.
 
 Or build from the source:
 

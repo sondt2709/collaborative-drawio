@@ -39,3 +39,6 @@ jobs:
 
       - name: Check the package contents
         run: npm pack --dry-run
+
+      - name: Check the npm publish
+        run: npm publish --dry-run --tag ci-check

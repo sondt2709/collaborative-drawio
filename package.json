@@ -37,5 +37,21 @@
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.1.0"
-  }
+  },
+  "homepage": "https://github.com/sondt2709/collaborative-drawio#readme",
+  "bugs": {
+    "url": "https://github.com/sondt2709/collaborative-drawio/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "drawio",
+    "draw.io",
+    "diagram",
+    "cli",
+    "ai-agent",
+    "claude-code",
+    "yaml"
+  ]
 }

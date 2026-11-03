@@ -14,7 +14,7 @@ The `.drawio` file is the only source of truth. A person edits it in the draw.io
 3. Send only the change. `dgm apply` keeps all other cells and all positions that a person gave.
 4. A hook message "dgm: a person changed these diagrams" lists the person's edits. They are recorded. Keep them: do not undo a person's edit unless the person asks.
 5. Before an apply, ask the person to save the diagram in draw.io if it is open with unsaved edits. After the apply, draw.io shows "The file has been modified. Click here to synchronize."
-6. After a change, run `dgm check` if the output shows problems, and fix them.
+6. Read the output of each command. Fix `check` problems. For each `hint:` (a line through a box, an almost straight line, line crossings), first try another YAML order, then ports or `via`. Use `dgm render` to look at the PNG.
 
 ## Commands
 
@@ -56,7 +56,15 @@ edges:
   - api -> svc                         # no label
   - "web -> api": HTTPS                # with a label
   - {from: svc, to: db, label: SQL, kind: existing, badge: 1}
+  - "api:r -> svc:l"                   # ports: t r b l, or r@0.3 (position on the side)
+  - "svc:b -> db:t via below core": reads   # via: around a box
+  - {from: api, to: db, via: elbow, route: curved}
 ```
+
+Lines are straight by default (with a detour around boxes when needed). Steer a line only when a hint asks for it:
+- `via`: `elbow` (one corner), `above|below|left|right <id>` (a lane beside a box), `x=N` or `y=N` (a lane), `[x, y]` (an exact point, rare). Several: `via: [below core, x=900]`.
+- `route`: `straight` (default), `orthogonal`, `curved`.
+- dgm computes the points again when boxes move. Points that the person dragged stay.
 
 Node keys: `kind`, `title`, `sub`, `tone`, `icon`, `variant`, `style`, `at`, `nodes` (zone only). Ids: letters, digits, `_`, `-`; unique at all depths. Quote a title that has `,` or `:` in a `{...}` map.
 
@@ -67,6 +75,7 @@ Node keys: `kind`, `title`, `sub`, `tone`, `icon`, `variant`, `style`, `at`, `no
 - edge kinds: `default`, `new` (bold, indigo), `existing` (thin), `dns` (dashed), `network` (teal)
 - `style` (rare): `stroke`, `fill`, `text` take a tone name or `accent`, `tint`, `surface`, `ink`, `muted`; `dashed`, `bold` take true/false; `width`, `height` take numbers.
 - `at: [x, y]` fixes a position (relative to the parent). Normally leave it out.
+- Text and notes on a zone become part of the zone. A zone fill that equals the page background is transparent.
 
 ## Apply format
 
@@ -79,7 +88,7 @@ add:
 set:
   svc: {title: Order API, tone: indigo, sub: null}  # null removes a field
   "a1B2c3-4": {id: stripe, kind: card, icon: credit-card}   # adopt a cell a person drew
-  "api -> svc": {label: gRPC, kind: new}            # edge reference; "a -> b#2" for the second
+  "api -> svc": {label: gRPC, from: "api:r", via: above core}   # edge; "a -> b#2" for the second; via: null clears
 connect:
   - "svc -> cache": reads
 move:

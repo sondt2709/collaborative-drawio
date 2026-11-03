@@ -67,11 +67,11 @@ describe('layout', () => {
     const band = v.byId.get('band')!;
     const right = Math.max(...v.nodes.filter((n) => n.parent === 'page' && n.id !== 'band').map((n) => n.geo.x + n.geo.w));
     expect(band.geo.x + band.geo.w).toBeGreaterThanOrEqual(right);
-    // Rows: chips start a new row below the cards, the note below the chips.
-    const c1 = v.byId.get('c1')!.geo;
+    // Direction down: chips and notes go beside the connected cards (to the right), the note below the chips.
+    const cards = ['c1', 'c2', 'c3', 'c4'].map((id) => v.byId.get(id)!.geo);
     const ch1 = v.byId.get('ch1')!.geo;
     const n1 = v.byId.get('n1')!.geo;
-    expect(ch1.y).toBeGreaterThan(c1.y + c1.h - 1);
+    expect(ch1.x).toBeGreaterThan(Math.max(...cards.map((c) => c.x + c.w)));
     expect(n1.y).toBeGreaterThan(ch1.y + ch1.h - 1);
   });
 
@@ -90,5 +90,14 @@ describe('layout', () => {
     await dgm(dir, ['create', 'a.drawio'], 'nodes: {a: {title: A, at: [500, 300]}, b: B}\n');
     const v = readView(DrawioDoc.parse(read(dir, 'a.drawio')));
     expect(v.byId.get('a')!.geo).toMatchObject({ x: 500, y: 300 });
+  });
+
+  it('a compound zone in direction down is as tall as its content (elkjs minimum-size workaround)', async () => {
+    const dir = tmpDir();
+    await dgm(dir, ['create', 'a.drawio'], 'nodes:\n  top: Top\n  z: {kind: zone, title: A rather long zone title for width, nodes: {a: A, b: B}}\nedges: [top -> a, top -> b]\n');
+    const v = readView(DrawioDoc.parse(read(dir, 'a.drawio')));
+    const z = v.byId.get('z')!.geo;
+    const a = v.byId.get('a')!.geo;
+    expect(z.h).toBe(a.y + a.h + 20);
   });
 });

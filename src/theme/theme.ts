@@ -39,7 +39,18 @@ export interface Theme {
     page: { margin: number; gap: number; layerGap: number; nodeGap: number; maxWidth?: number };
   };
   edges: Record<string, EdgeKind>;
+  rules: ThemeRules;
 }
+
+export interface ThemeRules {
+  /** [light, dark] */
+  containerThreshold: [number, number];
+  edgeArcSize: number;
+  laneMargin: number;
+  groupText: boolean;
+}
+
+export const DEFAULT_RULES: ThemeRules = { containerThreshold: [1.02, 1.1], edgeArcSize: 36, laneMargin: 24, groupText: true };
 
 export const NODE_KINDS = ['card', 'zone', 'chip', 'band', 'note', 'cylinder', 'text'] as const;
 export type NodeKind = (typeof NODE_KINDS)[number];
@@ -94,6 +105,7 @@ export function loadTheme(name: string, diagramFile: string, env: NodeJS.Process
   if (cached) return cached;
   const raw = readTheme(file, name, dir, env, 0);
   const theme = { ...(raw as unknown as Theme), name, source: file };
+  theme.rules = { ...DEFAULT_RULES, ...((raw as { rules?: Partial<ThemeRules> }).rules ?? {}) };
   validateTheme(theme, file);
   cache.set(file, theme);
   return theme;

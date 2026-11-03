@@ -43,3 +43,16 @@ edges:
   existing: { tone: slate, width: 1.2 }
   dns:      { tone: teal, width: 1.4, dashed: true }
   network:  { tone: teal, width: 1.6 }
+
+# Style rules that dgm applies on every write.
+rules:
+  # A container fill whose contrast with the page background is below this
+  # value ([light, dark]) is written as "none" (transparent) in that mode.
+  # Light: only near-white fills; the soft tints stay. Dark: near-black fills.
+  containerThreshold: [1.02, 1.1]
+  # Corner radius of lines (draw.io arcSize; the radius is half of it).
+  edgeArcSize: 36
+  # Distance of a lane from the box in "via: above <id>" and similar.
+  laneMargin: 24
+  # Text and notes that sit inside a zone become children of the zone.
+  groupText: true

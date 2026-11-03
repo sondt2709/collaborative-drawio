@@ -1,5 +1,6 @@
 import { Document, isMap, isSeq, type YAMLMap } from 'yaml';
 import type { DiagramView, NodeInfo } from '../diagram.js';
+import { formatPort, formatViaItem } from '../route/route.js';
 import { loadDiagram, type IO } from './common.js';
 
 function nodeValue(n: NodeInfo, kids: NodeInfo[], all: NodeInfo[], geometry: boolean): unknown {
@@ -39,14 +40,23 @@ export function viewToYaml(view: DiagramView, geometry = false): string {
   obj.nodes = nodesOf('page', all, geometry);
   if (view.edges.length) {
     obj.edges = view.edges.map((e) => {
-      const ref = e.ref.replace(/#\d+$/, '');
-      const extra = (e.kind && e.kind !== 'default') || e.variant || e.badge;
-      if (!extra) return e.label === undefined ? ref : { [ref]: e.label };
-      const o: Record<string, unknown> = { from: e.from, to: e.to };
+      const fp = formatPort(e.fromPort);
+      const tp = formatPort(e.toPort);
+      const from = fp ? `${e.from}:${fp}` : e.from;
+      const to = tp ? `${e.to}:${tp}` : e.to;
+      const via = e.via.map(formatViaItem);
+      const extra = (e.kind && e.kind !== 'default') || e.variant || e.badge || e.route;
+      if (!extra) {
+        const text = `${from} -> ${to}${via.length ? ` via ${via.join(', ')}` : ''}`;
+        return e.label === undefined ? text : { [text]: e.label };
+      }
+      const o: Record<string, unknown> = { from, to };
       if (e.label !== undefined) o.label = e.label;
       if (e.kind && e.kind !== 'default') o.kind = e.kind;
       if (e.variant) o.variant = e.variant;
       if (e.badge) o.badge = e.badge;
+      if (via.length) o.via = via.length === 1 ? via[0] : via;
+      if (e.route) o.route = e.route;
       return o;
     });
   }

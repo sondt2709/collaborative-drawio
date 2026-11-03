@@ -1,6 +1,9 @@
 import type { EdgeSpec, NodeSpec } from './dsl/parse.js';
 import type { Cell, DrawioDoc, Geometry } from './model/doc.js';
 import { fromHtmlLabel, toHtmlLabel } from './model/text.js';
+import { hasBase, getStyle } from './model/style.js';
+import { contains } from './route/geom.js';
+import { textWidth } from './layout/text.js';
 import {
   parseOverride,
   renderBadge,
@@ -12,6 +15,7 @@ import {
   type StyleOverride,
 } from './theme/render.js';
 import { NODE_KINDS, type NodeKind, type Theme } from './theme/theme.js';
+import { formatPort, formatVia, parsePort, parseViaText, routeEdges, ROUTES, type Box, type EdgeIntent, type Port, type RouteStyle, type ViaItem } from './route/route.js';
 
 export const A = {
   kind: 'dgm_kind',
@@ -22,6 +26,10 @@ export const A = {
   role: 'dgm_role',
   theme: 'dgm_theme',
   direction: 'dgm_direction',
+  fromPort: 'dgm_from_port',
+  toPort: 'dgm_to_port',
+  via: 'dgm_via',
+  route: 'dgm_route',
 } as const;
 
 export const SUB_KINDS: NodeKind[] = ['card', 'cylinder'];
@@ -53,6 +61,12 @@ export interface EdgeInfo {
   kind?: string;
   variant?: string;
   badge?: string;
+  fromPort?: Port;
+  toPort?: Port;
+  via: ViaItem[];
+  route?: RouteStyle;
+  /** Waypoints in the coordinates of the edge parent. */
+  points: Array<[number, number]>;
   cell: Cell;
 }
 
@@ -149,10 +163,16 @@ export function readView(doc: DrawioDoc): DiagramView {
     const n = (refCount.get(base) ?? 0) + 1;
     refCount.set(base, n);
     const labels = [fromHtmlLabel(doc.label(c)), ...(extraEdgeLabels.get(c.id) ?? [])].filter(Boolean);
-    const e: EdgeInfo = { id: c.id, from, to, ref: n > 1 ? `${base}#${n}` : base, cell: c };
+    const e: EdgeInfo = { id: c.id, from, to, ref: n > 1 ? `${base}#${n}` : base, cell: c, via: parseViaText(doc.attr(c, A.via)), points: doc.edgePoints(c) };
     if (labels.length) e.label = labels.join(' / ');
     e.kind = doc.attr(c, A.kind);
     e.variant = doc.attr(c, A.variant);
+    const fp = doc.attr(c, A.fromPort);
+    const tp = doc.attr(c, A.toPort);
+    if (fp) e.fromPort = parsePort(fp);
+    if (tp) e.toPort = parsePort(tp);
+    const rt = doc.attr(c, A.route);
+    if (rt && (ROUTES as string[]).includes(rt)) e.route = rt as RouteStyle;
     view.edges.push(e);
   }
   for (const c of cells) {
@@ -166,8 +186,103 @@ export function readView(doc: DrawioDoc): DiagramView {
 
 /** Find an edge by reference ("a -> b", "a -> b#2") or by cell id. */
 export function findEdge(view: DiagramView, ref: string): EdgeInfo | undefined {
-  const norm = ref.replace(/\s*->\s*/, ' -> ').trim();
+  const norm = ref
+    .replace(/:[trbl](@\d*\.?\d+)?(?=\s|$|#)/g, '')
+    .replace(/\s*->\s*/, ' -> ')
+    .trim();
   return view.edges.find((e) => e.ref === norm || (norm.endsWith('#1') && e.ref === norm.slice(0, -2)) || e.id === ref);
+}
+
+/** The page box of each vertex (geometry plus the offsets of its parents). */
+export function absBoxes(doc: DrawioDoc): Map<string, Box> {
+  const cells = doc.cells();
+  const byId = new Map(cells.map((c) => [c.id, c]));
+  const out = new Map<string, Box>();
+  const abs = (id: string, depth = 0): Box | undefined => {
+    if (out.has(id)) return out.get(id);
+    const c = byId.get(id);
+    if (!c || !doc.isVertex(c) || depth > 50) return undefined;
+    const g = doc.geometry(c);
+    if (!g) return undefined;
+    const p = doc.parentId(c);
+    const pb = p ? abs(p, depth + 1) : undefined;
+    const b = { x: g.x + (pb?.x ?? 0), y: g.y + (pb?.y ?? 0), w: g.w, h: g.h };
+    out.set(id, b);
+    return b;
+  };
+  for (const c of cells) abs(c.id);
+  return out;
+}
+
+/** True for a cell that contains other cells: a dgm zone, or a draw.io container or swimlane. */
+export function isContainer(doc: DrawioDoc, c: Cell): boolean {
+  const st = doc.style(c);
+  return doc.attr(c, A.kind) === 'zone' || getStyle(st, 'container') === '1' || hasBase(st, 'swimlane');
+}
+
+/**
+ * Boxes that a line should not cross: cards, cylinders, chips, notes, text,
+ * raw cells, and the title of each zone; not zones, bands or containers.
+ */
+export function obstacles(doc: DrawioDoc, view: DiagramView, boxes: Map<string, Box>, theme?: Theme): Array<{ id: string; box: Box }> {
+  const out: Array<{ id: string; box: Box }> = [];
+  for (const n of view.nodes) {
+    if (n.kind === 'zone' && theme) {
+      const b = boxes.get(n.id);
+      const fs = theme.sizes.zone.fontSize;
+      if (b && n.title) out.push({ id: `${n.id} (title)`, box: { x: b.x + 8, y: b.y + 6, w: Math.min(b.w - 16, textWidth(n.title, fs, true) + (n.icon ? 38 : 16) + 8), h: 22 } });
+    }
+    if (n.kind === 'zone' || n.kind === 'band' || isContainer(doc, n.cell)) continue;
+    const b = boxes.get(n.id);
+    if (b && b.w > 0 && b.h > 0) out.push({ id: n.id, box: b });
+  }
+  return out;
+}
+
+/** A text that may need to move into the zone under it: a text or note node, or a raw text cell. */
+function isFloatingTextCandidate(doc: DrawioDoc, n: NodeInfo): boolean {
+  if (n.kind === 'text' || n.kind === 'note') return true;
+  return n.kind === 'raw' && hasBase(doc.style(n.cell), 'text');
+}
+
+/** Texts whose box is inside a zone that is not their parent: [text id, innermost zone id]. */
+export function floatingTexts(doc: DrawioDoc, view: DiagramView): Array<[string, string]> {
+  const boxes = absBoxes(doc);
+  const zones = view.nodes.filter((n) => isContainer(doc, n.cell));
+  const out: Array<[string, string]> = [];
+  for (const n of view.nodes) {
+    if (!isFloatingTextCandidate(doc, n)) continue;
+    const b = boxes.get(n.id);
+    if (!b) continue;
+    let best: NodeInfo | undefined;
+    let bestArea = Infinity;
+    for (const z of zones) {
+      if (z.id === n.id) continue;
+      const zb = boxes.get(z.id);
+      if (!zb || !contains(zb, b)) continue;
+      // Not a zone inside the text itself.
+      let cur: string | undefined = z.id;
+      let inside = false;
+      for (let i = 0; cur && i < 50; i++) {
+        if (cur === n.id) inside = true;
+        cur = view.byId.get(cur)?.parent;
+      }
+      if (inside) continue;
+      if (zb.w * zb.h < bestArea) {
+        best = z;
+        bestArea = zb.w * zb.h;
+      }
+    }
+    if (best && n.parent !== best.id) out.push([n.id, best.id]);
+  }
+  return out;
+}
+
+export interface EdgeIntentFields {
+  fromPort?: Port | null;
+  toPort?: Port | null;
+  via?: ViaItem[] | null;
+  route?: RouteStyle | null;
 }
 
 /** Writes dgm cells into a document with a theme. */
@@ -295,6 +410,13 @@ export class Editor {
     const id = this.nextEdgeId();
     const attrs: Array<[string, string]> = [[A.kind, e.kind ?? 'default']];
     if (e.variant) attrs.push([A.variant, e.variant]);
+    const fp = formatPort(e.fromPort);
+    const tp = formatPort(e.toPort);
+    const via = formatVia(e.via ?? []);
+    if (fp) attrs.push([A.fromPort, fp]);
+    if (tp) attrs.push([A.toPort, tp]);
+    if (via) attrs.push([A.via, via]);
+    if (e.route && e.route !== 'straight') attrs.push([A.route, e.route]);
     this.doc.addCell({
       id,
       parent: '1',
@@ -314,7 +436,7 @@ export class Editor {
     const d = this.doc;
     const c = d.get(id);
     if (!c) return;
-    const look = { kind: d.attr(c, A.kind), variant: d.attr(c, A.variant) };
+    const look = { kind: d.attr(c, A.kind), variant: d.attr(c, A.variant), route: d.attr(c, A.route) as RouteStyle | undefined };
     if (look.kind !== undefined) d.setStyle(c, renderEdge(this.theme, look));
     const old = this.helpers(id).find((h) => d.attr(h, A.role) === 'badge');
     const text = badge === undefined ? (old ? d.label(old) : undefined) : badge === null ? undefined : toHtmlLabel(badge);
@@ -338,6 +460,73 @@ export class Editor {
         after: c,
       });
     }
+  }
+
+  /** Style rule: move floating texts into the zone under them, at the same page position. Returns "text into zone" lines. */
+  groupText(): string[] {
+    if (!this.theme.rules.groupText) return [];
+    const d = this.doc;
+    const moved: string[] = [];
+    for (const [id, zone] of floatingTexts(d, readView(d))) {
+      const boxes = absBoxes(d);
+      const b = boxes.get(id)!;
+      const zb = boxes.get(zone)!;
+      const c = d.get(id)!;
+      d.setParent(c, zone);
+      d.setGeometry(c, { x: b.x - zb.x, y: b.y - zb.y, w: b.w, h: b.h });
+      moved.push(`${id} into ${zone}`);
+    }
+    return moved;
+  }
+
+  /** Change the stored intent of an edge. null removes a field. */
+  setEdgeIntent(id: string, f: EdgeIntentFields): void {
+    const d = this.doc;
+    let c = d.get(id);
+    if (!c) return;
+    if ('fromPort' in f) c = d.setAttr(c, A.fromPort, formatPort(f.fromPort ?? undefined));
+    if ('toPort' in f) c = d.setAttr(c, A.toPort, formatPort(f.toPort ?? undefined));
+    if ('via' in f) c = d.setAttr(c, A.via, formatVia(f.via ?? []));
+    if ('route' in f) d.setAttr(c, A.route, f.route && f.route !== 'straight' ? f.route : undefined);
+  }
+
+  /**
+   * Compute the ports and points of the dgm edges from their intent, and write
+   * them when they change. Legacy edges (orthogonal, written before routing
+   * existed) are routed only when `force` names them or `includeLegacy` is set.
+   * Edges in `keep` keep their points (a person changed them).
+   */
+  routeAll(opts: { force?: Set<string>; includeLegacy?: boolean; keep?: Set<string> } = {}): string[] {
+    const d = this.doc;
+    const view = readView(d);
+    const boxes = absBoxes(d);
+    const intents: EdgeIntent[] = [];
+    const looks = new Map<string, { kind?: string; variant?: string; route: RouteStyle }>();
+    for (const e of view.edges) {
+      if (!e.kind || opts.keep?.has(e.id)) continue;
+      if (!boxes.has(e.from) || !boxes.has(e.to) || e.from === e.to) continue;
+      const legacy = !e.route && !e.fromPort && !e.toPort && !e.via.length && d.style(e.cell).includes('edgeStyle=orthogonalEdgeStyle');
+      if (legacy && !opts.includeLegacy && !opts.force?.has(e.id)) continue;
+      intents.push({ id: e.id, from: e.from, to: e.to, fromPort: e.fromPort, toPort: e.toPort, via: e.via });
+      looks.set(e.id, { kind: e.kind, variant: e.variant, route: e.route ?? 'straight' });
+    }
+    // Zones and bands: lines may cross them, but should not run along their border.
+    const zones = view.nodes.filter((n) => isContainer(d, n.cell) || n.kind === 'band').map((n) => boxes.get(n.id)).filter((b): b is Box => !!b);
+    const routed = routeEdges(intents, boxes, this.theme.rules.laneMargin, obstacles(d, view, boxes, this.theme), zones);
+    const changed: string[] = [];
+    for (const [id, r] of routed) {
+      const c = d.get(id)!;
+      const parent = d.parentId(c);
+      const off = parent ? boxes.get(parent) : undefined;
+      const pts = r.points.map(([x, y]) => [x - (off?.x ?? 0), y - (off?.y ?? 0)] as [number, number]);
+      const style = renderEdge(this.theme, looks.get(id)!, r);
+      const oldPts = d.edgePoints(c);
+      const samePts = oldPts.length === pts.length && oldPts.every((p, i) => Math.abs(p[0] - pts[i][0]) < 0.01 && Math.abs(p[1] - pts[i][1]) < 0.01);
+      if (d.style(c) !== style || !samePts) changed.push(id);
+      if (d.style(c) !== style) d.setStyle(c, style);
+      if (!samePts) d.setEdgePoints(c, pts);
+    }
+    return changed;
   }
 
   /** Write or remove the title and subtitle cells. */

@@ -140,12 +140,22 @@ edges:
 | `style` | `stroke`, `fill`, `text` (a tone name or `accent`, `tint`, `surface`, `ink`, `muted`), `dashed`, `bold`, `width`, `height` |
 | `at` | `[x, y]`, a fixed position relative to the parent |
 
+Edges are straight lines by default. A line is exactly horizontal or vertical when the boxes overlap, and it takes a detour when the straight line would cross a box. To steer a line:
+
+| Edge key | Values |
+|---|---|
+| ports | `api:r -> svc:l`: a side `t`, `r`, `b` or `l`, with an optional position on the side (`r@0.3`). Lines on one side of a box are spread out. |
+| `via` | `elbow`, `above <id>`, `below <id>`, `left <id>`, `right <id>`, `x=N`, `y=N`, `[x, y]`, or a list. In the short form: `"svc:b -> db:t via below core": reads` |
+| `route` | `straight` (default), `orthogonal`, `curved` |
+
+`dgm` stores this intent in the edge and computes the points again when a box moves. When you drag the points of a line in draw.io, `dgm` keeps them.
+
 Apply operations:
 
 ```yaml
 add:     {cache: {title: Redis, icon: database, in: core}}   # in: a zone; near: a node id
 set:     {svc: {title: Order API, sub: null}, "api -> svc": {label: gRPC}}
-connect: ["svc -> cache"]
+connect: ["svc:b -> cache:t via elbow"]
 move:    {cache: {in: page}}
 remove:  [queue, "web -> api"]
 ```
@@ -162,6 +172,11 @@ The package includes the theme `pro` ([`themes/pro.yaml`](themes/pro.yaml)). Eac
 
 A theme file can start with `extends: pro` and change only some values.
 
+Style rules in the theme (`rules`):
+- A zone whose fill looks like the page background in a mode is transparent in that mode.
+- Lines have rounded corners (`edgeArcSize`).
+- Text and notes that sit on a zone become part of the zone, so they move with it.
+
 ## History
 
 `dgm` keeps the history of `docs/arch.drawio` in `docs/.dgm/arch.drawio/`: a log and one small JSON snapshot for each entry (no XML). You decide whether to commit the `.dgm/` folder.
@@ -169,7 +184,8 @@ A theme file can start with `extends: pro` and change only some values.
 ## Limits
 
 - `dgm` changes the first page only. It keeps all other pages unchanged.
-- draw.io routes the edges. Long edges can cross other nodes. Move a node in draw.io, or run `dgm layout`.
+- `dgm check` gives hints (a line through a box, an almost straight line, line crossings, text that floats over a zone). The agent fixes them with another order, ports or `via`. Hints do not change the exit code.
+- After you move a box in draw.io, its lines keep their old points until the next `dgm apply` or `dgm layout`.
 - `dgm` cannot see edits that you did not save. Save in draw.io before you ask the agent for a change.
 - When the agent changes the style of a node, your own style edits on that node are replaced by the theme style.
 

@@ -3,6 +3,7 @@ import { ValidationError } from '../errors.js';
 import { iconExists, suggestIcons } from '../icons/index.js';
 import { OVERRIDE_KEYS, type StyleOverride } from '../theme/render.js';
 import { NODE_KINDS, SEMANTIC_COLORS, VARIANTS, type NodeKind, type Theme } from '../theme/theme.js';
+import { ROUTES, parsePort, parseViaItem, splitEndpoint, splitViaText, type Port, type RouteStyle, type ViaItem } from '../route/route.js';
 
 export type Direction = 'down' | 'right';
 
@@ -28,6 +29,10 @@ export interface EdgeSpec {
   path: string;
   from: string;
   to: string;
+  fromPort?: Port;
+  toPort?: Port;
+  via?: ViaItem[];
+  route?: RouteStyle;
   label?: string;
   kind?: string;
   variant?: string;
@@ -56,6 +61,11 @@ export interface SetFields {
   label?: string | null;
   badge?: string | null;
   edgeKind?: string | null;
+  /** Edge endpoints with ports. */
+  from?: { id: string; port?: Port };
+  to?: { id: string; port?: Port };
+  via?: ViaItem[] | null;
+  route?: RouteStyle | null;
 }
 
 export interface SetOp {
@@ -86,7 +96,7 @@ export interface ApplySpec {
 
 export const ID_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_-]*$/;
 const NODE_KEYS = ['kind', 'title', 'sub', 'tone', 'icon', 'variant', 'style', 'at', 'nodes'];
-const EDGE_KEYS = ['from', 'to', 'label', 'kind', 'variant', 'badge'];
+const EDGE_KEYS = ['from', 'to', 'label', 'kind', 'variant', 'badge', 'via', 'route'];
 const ICON_KINDS: NodeKind[] = ['card', 'cylinder', 'zone', 'chip', 'band'];
 const SUB_KINDS: NodeKind[] = ['card', 'cylinder'];
 
@@ -223,7 +233,11 @@ function parseNode(ctx: Ctx, id: string, value: unknown, path: string, extra: st
     return { id, path, kind: 'card', title: id, children: [] };
   }
   const allowed = [...NODE_KEYS, ...extra];
-  for (const k of Object.keys(value)) if (!allowed.includes(k)) ctx.bad(`${path}.${k}`, `unknown key. Use one of: ${list(allowed)}`);
+  for (const k of Object.keys(value)) {
+    if (allowed.includes(k)) continue;
+    const hint = /\s/.test(k) ? ' A comma inside {...} starts a new key: put quotes around a text that has a comma, for example title: "a, b".' : '';
+    ctx.bad(`${path}.${k}`, `unknown key. Use one of: ${list(allowed)}.${hint}`);
+  }
   const kind = value.kind === undefined ? 'card' : (checkKind(ctx, `${path}.kind`, value.kind) ?? 'card');
   const n: NodeSpec = { id, path, kind, title: str(value.title) ?? id, children: [] };
   if (value.sub !== undefined && value.sub !== null) {
@@ -257,27 +271,83 @@ function checkEdgeKind(ctx: Ctx, path: string, v: unknown): string | undefined {
   return s;
 }
 
-/** Split "a -> b" into [a, b]. */
+/** Split "a -> b" into [a, b] (ports and via are not allowed). */
 export function splitEdgeRef(s: string): [string, string] | undefined {
   const m = /^\s*([^\s>]+?)\s*->\s*([^\s#]+?)\s*$/.exec(s);
   return m ? [m[1], m[2]] : undefined;
 }
 
-function parseEdge(ctx: Ctx, item: unknown, path: string): EdgeSpec | undefined {
-  if (typeof item === 'string') {
-    const ends = splitEdgeRef(item);
-    if (!ends) ctx.bad(path, `edge must be "from -> to", got ${JSON.stringify(item)}`);
-    return ends ? { path, from: ends[0], to: ends[1] } : undefined;
+/** "a:r -> b:l via above core" into its parts. Returns undefined when it is not an edge. */
+export function splitEdgeText(s: string): { from: string; to: string; via?: string } | undefined {
+  const m = /^\s*(\S+?)\s*->\s*(\S+?)(?:\s+via\s+(.+?))?\s*$/.exec(s);
+  return m ? { from: m[1], to: m[2], via: m[3] } : undefined;
+}
+
+function checkEndpoint(ctx: Ctx, path: string, text: string): { id: string; port?: Port } {
+  const { id, port } = splitEndpoint(text);
+  if (port === undefined) return { id };
+  const p = parsePort(port);
+  if (!p) {
+    ctx.bad(path, `invalid port "${port}" in "${text}". Use a side t, r, b or l, with an optional position @0..1 (for example r or b@0.3)`);
+    return { id };
   }
+  return { id, port: p };
+}
+
+export function checkVia(ctx: Ctx, path: string, v: unknown): ViaItem[] | undefined {
+  const items: unknown[] =
+    typeof v === 'string'
+      ? splitViaText(v)
+      : Array.isArray(v) && v.length === 2 && v.every((n) => typeof n === 'number')
+        ? [v]
+        : Array.isArray(v)
+          ? v
+          : [v];
+  const out: ViaItem[] = [];
+  for (const it of items) {
+    let item: ViaItem | undefined;
+    if (Array.isArray(it) && it.length === 2 && it.every((n) => typeof n === 'number' && Number.isFinite(n))) item = { kind: 'point', x: it[0], y: it[1] };
+    else if (typeof it === 'string') item = parseViaItem(it);
+    if (!item) {
+      ctx.bad(path, `invalid via item ${JSON.stringify(it)}. Use elbow, x=<n>, y=<n>, above <id>, below <id>, left <id>, right <id> or [x, y]`);
+      return undefined;
+    }
+    out.push(item);
+  }
+  return out;
+}
+
+function checkRoute(ctx: Ctx, path: string, v: unknown): RouteStyle | undefined {
+  if (typeof v === 'string' && (ROUTES as string[]).includes(v)) return v as RouteStyle;
+  ctx.bad(path, `unknown route ${JSON.stringify(v)}. Use one of: ${list(ROUTES)}`);
+  return undefined;
+}
+
+function edgeFromText(ctx: Ctx, path: string, text: string): EdgeSpec | undefined {
+  const parts = splitEdgeText(text);
+  if (!parts) {
+    ctx.bad(path, `edge must be "from -> to", got ${JSON.stringify(text)}`);
+    return undefined;
+  }
+  const f = checkEndpoint(ctx, path, parts.from);
+  const t = checkEndpoint(ctx, path, parts.to);
+  const e: EdgeSpec = { path, from: f.id, to: t.id, fromPort: f.port, toPort: t.port };
+  if (parts.via) e.via = checkVia(ctx, path, parts.via);
+  return e;
+}
+
+function parseEdge(ctx: Ctx, item: unknown, path: string): EdgeSpec | undefined {
+  if (typeof item === 'string') return edgeFromText(ctx, path, item);
   if (!isMap(item)) {
     ctx.bad(path, 'an edge is "from -> to", {"from -> to": label} or a map with from and to');
     return undefined;
   }
   const keys = Object.keys(item);
-  if (keys.length === 1 && splitEdgeRef(keys[0])) {
-    const [from, to] = splitEdgeRef(keys[0])!;
+  if (keys.length === 1 && splitEdgeText(keys[0]) && !EDGE_KEYS.includes(keys[0])) {
+    const e = edgeFromText(ctx, path, keys[0]);
     const v = item[keys[0]];
-    return { path, from, to, label: v === null ? undefined : str(v) };
+    if (e && v !== null && v !== undefined) e.label = str(v);
+    return e;
   }
   for (const k of keys) if (!EDGE_KEYS.includes(k)) ctx.bad(`${path}.${k}`, `unknown key. Use one of: ${list(EDGE_KEYS)}`);
   const from = str(item.from);
@@ -285,12 +355,21 @@ function parseEdge(ctx: Ctx, item: unknown, path: string): EdgeSpec | undefined 
   if (!from) ctx.bad(`${path}.from`, 'is required');
   if (!to) ctx.bad(`${path}.to`, 'is required');
   if (!from || !to) return undefined;
-  const e: EdgeSpec = { path, from, to };
+  const f = checkEndpoint(ctx, `${path}.from`, from);
+  const t = checkEndpoint(ctx, `${path}.to`, to);
+  const e: EdgeSpec = { path, from: f.id, to: t.id, fromPort: f.port, toPort: t.port };
   if (item.label !== undefined && item.label !== null) e.label = str(item.label);
   if (item.kind !== undefined) e.kind = checkEdgeKind(ctx, `${path}.kind`, item.kind);
   if (item.variant !== undefined) e.variant = checkVariant(ctx, `${path}.variant`, item.variant);
   if (item.badge !== undefined && item.badge !== null) e.badge = str(item.badge);
+  if (item.via !== undefined && item.via !== null) e.via = checkVia(ctx, `${path}.via`, item.via);
+  if (item.route !== undefined) e.route = checkRoute(ctx, `${path}.route`, item.route);
   return e;
+}
+
+/** The node ids that the via items of an edge name. */
+export function viaIds(e: { via?: ViaItem[] }): string[] {
+  return (e.via ?? []).flatMap((v) => (v.kind === 'above' || v.kind === 'below' || v.kind === 'left' || v.kind === 'right' ? [v.id] : []));
 }
 
 function parseEdges(ctx: Ctx, v: unknown, path: string): EdgeSpec[] {
@@ -336,6 +415,7 @@ export function parseDiagram(raw: unknown, theme: Theme): DiagramSpec {
   spec.edges = parseEdges(ctx, raw.edges, 'edges');
   for (const e of spec.edges) {
     for (const end of [e.from, e.to]) if (!ctx.ids.has(end)) ctx.bad(e.path, `unknown node "${end}"`);
+    for (const id of viaIds(e)) if (!ctx.ids.has(id)) ctx.bad(e.path, `unknown node "${id}" in via`);
   }
   ctx.done();
   return spec;
@@ -365,7 +445,7 @@ export function parseApply(raw: unknown, theme: Theme): ApplySpec {
           continue;
         }
         const isEdge = ref.includes('->');
-        const allowed = isEdge ? ['label', 'kind', 'variant', 'badge'] : ['id', 'title', 'sub', 'kind', 'tone', 'icon', 'variant', 'style'];
+        const allowed = isEdge ? ['label', 'kind', 'variant', 'badge', 'from', 'to', 'via', 'route'] : ['id', 'title', 'sub', 'kind', 'tone', 'icon', 'variant', 'style'];
         const f: SetFields = {};
         for (const [k, val] of Object.entries(v)) {
           const p = `${path}.${k}`;
@@ -378,6 +458,12 @@ export function parseApply(raw: unknown, theme: Theme): ApplySpec {
             else if (k === 'badge') f.badge = val === null ? null : (str(val) ?? null);
             else if (k === 'kind') f.edgeKind = val === null ? null : checkEdgeKind(ctx, p, val);
             else if (k === 'variant') f.variant = val === null ? null : checkVariant(ctx, p, val);
+            else if (k === 'from' || k === 'to') {
+              const t = str(val);
+              if (!t) ctx.bad(p, 'must be a node id, with an optional port (for example api:r)');
+              else f[k] = checkEndpoint(ctx, p, t);
+            } else if (k === 'via') f.via = val === null ? null : (checkVia(ctx, p, val) ?? null);
+            else if (k === 'route') f.route = val === null ? null : checkRoute(ctx, p, val);
             continue;
           }
           switch (k) {

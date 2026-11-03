@@ -14,6 +14,7 @@ describe('examples', () => {
     const r = await dgm(dir, ['create', 'out.drawio'], readFileSync(join(ROOT, 'examples', f), 'utf8'));
     expect(r.code, r.out + r.err).toBe(0);
     expect(r.out).toContain('check: ok');
+    expect(r.out).not.toContain('hint:');
   });
 
   it.skipIf(!drawio)('renders in light and dark with the draw.io CLI', async () => {

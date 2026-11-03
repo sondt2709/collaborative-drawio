@@ -60,7 +60,7 @@ describe('validation errors name the YAML path', () => {
 
   it('unknown keys and wrong values', () => {
     const e = errorsOf('nodes: {a: {colour: red, at: [1]}, b: {kind: note, sub: x}}\ndirection: up\nfoo: 1');
-    expect(e).toContain('foo: unknown key. Use one of: title, subtitle, theme, direction, nodes, edges');
+    expect(e).toContain('foo: unknown key. Use one of: title, subtitle, theme, direction, rows, width, nodes, edges');
     expect(e).toContain('direction: must be down or right');
     expect(e.some((x) => x.startsWith('nodes.a.colour: unknown key'))).toBe(true);
     expect(e).toContain('nodes.a.at: must be [x, y] with two numbers');

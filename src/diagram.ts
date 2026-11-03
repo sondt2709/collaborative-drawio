@@ -30,7 +30,22 @@ export const A = {
   toPort: 'dgm_to_port',
   via: 'dgm_via',
   route: 'dgm_route',
+  rows: 'dgm_rows',
+  width: 'dgm_width',
+  layout: 'dgm_layout',
 } as const;
+
+export type RowItem = string | string[];
+
+export function parseRowsAttr(v: string | undefined): RowItem[][] | undefined {
+  if (!v) return undefined;
+  try {
+    const x = JSON.parse(v) as unknown;
+    return Array.isArray(x) ? (x as RowItem[][]) : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export const SUB_KINDS: NodeKind[] = ['card', 'cylinder'];
 const TITLE_ID = '_title';
@@ -47,6 +62,7 @@ export interface NodeInfo {
   style?: StyleOverride;
   title: string;
   sub?: string;
+  rows?: RowItem[][];
   geo: Geometry;
   cell: Cell;
 }
@@ -65,6 +81,8 @@ export interface EdgeInfo {
   toPort?: Port;
   via: ViaItem[];
   route?: RouteStyle;
+  /** false: the edge does not affect the placement. */
+  layout?: boolean;
   /** Waypoints in the coordinates of the edge parent. */
   points: Array<[number, number]>;
   cell: Cell;
@@ -75,6 +93,8 @@ export interface DiagramView {
   subtitle?: string;
   theme: string;
   direction: 'down' | 'right';
+  rows?: RowItem[][];
+  width?: number;
   nodes: NodeInfo[];
   edges: EdgeInfo[];
   byId: Map<string, NodeInfo>;
@@ -107,6 +127,8 @@ export function readView(doc: DrawioDoc): DiagramView {
   const view: DiagramView = {
     theme: doc.pageAttr(A.theme) ?? 'pro',
     direction: doc.pageAttr(A.direction) === 'right' ? 'right' : 'down',
+    rows: parseRowsAttr(doc.pageAttr(A.rows)),
+    width: Number(doc.pageAttr(A.width)) || undefined,
     nodes: [],
     edges: [],
     byId: new Map(),
@@ -143,6 +165,7 @@ export function readView(doc: DrawioDoc): DiagramView {
       n.icon = doc.attr(c, A.icon);
       n.variant = doc.attr(c, A.variant);
       n.style = parseOverride(doc.attr(c, A.style));
+      n.rows = parseRowsAttr(doc.attr(c, A.rows));
     }
     view.nodes.push(n);
     view.byId.set(n.id, n);
@@ -171,6 +194,7 @@ export function readView(doc: DrawioDoc): DiagramView {
     const tp = doc.attr(c, A.toPort);
     if (fp) e.fromPort = parsePort(fp);
     if (tp) e.toPort = parsePort(tp);
+    if (doc.attr(c, A.layout) === '0') e.layout = false;
     const rt = doc.attr(c, A.route);
     if (rt && (ROUTES as string[]).includes(rt)) e.route = rt as RouteStyle;
     view.edges.push(e);
@@ -388,6 +412,7 @@ export class Editor {
     if (spec.variant) attrs.push([A.variant, spec.variant]);
     const st = serializeOverride(spec.style);
     if (st) attrs.push([A.style, st]);
+    if (spec.rows?.length) attrs.push([A.rows, JSON.stringify(spec.rows)]);
     this.doc.addCell({
       id: spec.id,
       parent,
@@ -417,6 +442,7 @@ export class Editor {
     if (tp) attrs.push([A.toPort, tp]);
     if (via) attrs.push([A.via, via]);
     if (e.route && e.route !== 'straight') attrs.push([A.route, e.route]);
+    if (e.layout === false) attrs.push([A.layout, '0']);
     this.doc.addCell({
       id,
       parent: '1',

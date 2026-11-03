@@ -147,8 +147,25 @@ Edges are straight lines by default. A line is exactly horizontal or vertical wh
 | ports | `api:r -> svc:l`: a side `t`, `r`, `b` or `l`, with an optional position on the side (`r@0.3`). Lines on one side of a box are spread out. |
 | `via` | `elbow`, `above <id>`, `below <id>`, `left <id>`, `right <id>`, `x=N`, `y=N`, `[x, y]`, or a list. In the short form: `"svc:b -> db:t via below core": reads` |
 | `route` | `straight` (default), `orthogonal`, `curved` |
+| `layout` | `false`: the edge does not affect where boxes go (it is still drawn and routed) |
 
 `dgm` stores this intent in the edge and computes the points again when a box moves. When you drag the points of a line in draw.io, `dgm` keeps them.
+
+To compose a large diagram, give rows of ids, for the page or for a zone. A list inside a row is a column. Zones in one row get the same height:
+
+```yaml
+width: 2400                      # page width (optional)
+rows:
+  - [users, partners]
+  - [onprem, cloud, [office, api]]   # office above api
+nodes:
+  cloud:
+    kind: zone
+    rows: [[gateway, lb], [app], [vpc], [gpu, data]]
+    nodes: {...}
+```
+
+A band inside a zone divides the zone. `dgm show --geometry` prints the position and size of each node, for exact lanes (`via: x=N`). Change the composition later with `set: {page: {rows: [...]}}` or `set: {zone: {rows: [...]}}`, then run `dgm layout`.
 
 Apply operations:
 

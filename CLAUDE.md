@@ -61,7 +61,7 @@ The render test in `tests/examples.test.ts` runs only when the draw.io desktop a
 - `src/icons/`: Lucide icon nodes to draw.io stencil XML, compressed as draw.io does.
 - `src/route/`: edge routing. `route.ts` turns ports and `via` items into points (lines on one side are spread out). The default route is straight, exactly horizontal or vertical when the boxes overlap, with a detour when the line would cross a box: simple shapes first, then an A* search on a grid of box borders (`grid.ts`). `geom.ts` has the crossing tests that `dgm check` also uses.
 - `src/dsl/parse.ts`: YAML parsing and validation. Errors name the YAML path.
-- `src/layout/`: text width table, elkjs layered layout (`INCLUDE_CHILDREN`) that aligns connected boxes also inside zones, rows for chips, notes and boxes without edges, placement of new nodes.
+- `src/layout/`: text width table, elkjs layered layout (`INCLUDE_CHILDREN`) that aligns connected boxes also inside zones, rows for chips, notes and boxes without edges, placement of new nodes. A container with `rows` (page or zone) or with a band child is laid out alone, bottom-up first (`precompute`), and is one fixed box for the outer layout. Edges with `layout: false` are not given to elk.
 - `src/track/track.ts`: snapshots, the diff and the log in `.dgm/<file-name>/`.
 - `src/check.ts`: raw colors and contrast in light and dark mode.
 - `src/commands/`: one file for each command. `setup.ts` also has the hook.

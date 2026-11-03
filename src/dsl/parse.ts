@@ -6,6 +6,7 @@ import { NODE_KINDS, SEMANTIC_COLORS, VARIANTS, type NodeKind, type Theme } from
 import { ROUTES, parsePort, parseViaItem, splitEndpoint, splitViaText, type Port, type RouteStyle, type ViaItem } from '../route/route.js';
 
 export type Direction = 'down' | 'right';
+export type RowItem = string | string[];
 
 export interface NodeSpec {
   id: string;
@@ -18,6 +19,8 @@ export interface NodeSpec {
   variant?: string;
   style?: StyleOverride;
   at?: [number, number];
+  /** Zone composition: rows of child ids; a list item is a column. */
+  rows?: RowItem[][];
   children: NodeSpec[];
   /** apply `add` only: the parent zone. */
   in?: string;
@@ -33,6 +36,8 @@ export interface EdgeSpec {
   toPort?: Port;
   via?: ViaItem[];
   route?: RouteStyle;
+  /** false: the edge does not affect the placement. */
+  layout?: boolean;
   label?: string;
   kind?: string;
   variant?: string;
@@ -44,6 +49,8 @@ export interface DiagramSpec {
   subtitle?: string;
   theme: string;
   direction: Direction;
+  rows?: RowItem[][];
+  width?: number;
   nodes: NodeSpec[];
   edges: EdgeSpec[];
 }
@@ -66,6 +73,9 @@ export interface SetFields {
   to?: { id: string; port?: Port };
   via?: ViaItem[] | null;
   route?: RouteStyle | null;
+  layout?: boolean | null;
+  rows?: RowItem[][] | null;
+  width?: number | null;
 }
 
 export interface SetOp {
@@ -95,8 +105,8 @@ export interface ApplySpec {
 }
 
 export const ID_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_-]*$/;
-const NODE_KEYS = ['kind', 'title', 'sub', 'tone', 'icon', 'variant', 'style', 'at', 'nodes'];
-const EDGE_KEYS = ['from', 'to', 'label', 'kind', 'variant', 'badge', 'via', 'route'];
+const NODE_KEYS = ['kind', 'title', 'sub', 'tone', 'icon', 'variant', 'style', 'at', 'nodes', 'rows'];
+const EDGE_KEYS = ['from', 'to', 'label', 'kind', 'variant', 'badge', 'via', 'route', 'layout'];
 const ICON_KINDS: NodeKind[] = ['card', 'cylinder', 'zone', 'chip', 'band'];
 const SUB_KINDS: NodeKind[] = ['card', 'cylinder'];
 
@@ -209,6 +219,10 @@ export function checkStyle(ctx: Ctx, path: string, v: unknown): StyleOverride | 
 }
 
 function checkId(ctx: Ctx, id: string, path: string): boolean {
+  if (id === 'page') {
+    ctx.bad(path, 'the id "page" is reserved for the page');
+    return false;
+  }
   if (!ID_PATTERN.test(id)) {
     ctx.bad(path, `invalid id ${JSON.stringify(id)}: use letters, digits, "_" and "-"`);
     return false;
@@ -252,6 +266,10 @@ function parseNode(ctx: Ctx, id: string, value: unknown, path: string, extra: st
   if (value.variant !== undefined) n.variant = checkVariant(ctx, `${path}.variant`, value.variant);
   if (value.style !== undefined) n.style = checkStyle(ctx, `${path}.style`, value.style);
   if (value.at !== undefined) n.at = checkPoint(ctx, `${path}.at`, value.at);
+  if (value.rows !== undefined) {
+    if (kind !== 'zone') ctx.bad(`${path}.rows`, 'only a zone has rows');
+    else n.rows = checkRows(ctx, `${path}.rows`, value.rows);
+  }
   if (value.nodes !== undefined) {
     if (kind !== 'zone') ctx.bad(`${path}.nodes`, 'only a zone can contain nodes');
     else if (!isMap(value.nodes)) ctx.bad(`${path}.nodes`, 'must be a map of node ids to nodes');
@@ -260,6 +278,37 @@ function parseNode(ctx: Ctx, id: string, value: unknown, path: string, extra: st
   if (extra.includes('in') && value.in !== undefined) n.in = str(value.in);
   if (extra.includes('near') && value.near !== undefined) n.near = str(value.near);
   return n;
+}
+
+/** The form of `rows`: a list of rows; a row is a list of ids or lists of ids (columns). */
+export function checkRows(ctx: Ctx, path: string, v: unknown): RowItem[][] | undefined {
+  const bad = () => {
+    ctx.bad(path, 'must be a list of rows, for example [[a, b], [c, [d, e]]]; a list inside a row is a column');
+    return undefined;
+  };
+  if (!Array.isArray(v)) return bad();
+  const out: RowItem[][] = [];
+  for (const row of v) {
+    const items = Array.isArray(row) ? row : [row];
+    const r: RowItem[] = [];
+    for (const it of items) {
+      if (typeof it === 'string') r.push(it);
+      else if (Array.isArray(it) && it.length && it.every((x) => typeof x === 'string')) r.push(it as string[]);
+      else return bad();
+    }
+    out.push(r);
+  }
+  return out;
+}
+
+/** Each id in rows must be one of `ids`, at most once. */
+export function checkRowIds(ctx: Ctx, path: string, rows: RowItem[][], ids: Set<string>, what: string): void {
+  const seen = new Set<string>();
+  for (const id of rows.flat(2)) {
+    if (!ids.has(id)) ctx.bad(path, `"${id}" is not ${what}`);
+    else if (seen.has(id)) ctx.bad(path, `"${id}" appears more than once`);
+    seen.add(id);
+  }
 }
 
 function checkEdgeKind(ctx: Ctx, path: string, v: unknown): string | undefined {
@@ -364,6 +413,10 @@ function parseEdge(ctx: Ctx, item: unknown, path: string): EdgeSpec | undefined 
   if (item.badge !== undefined && item.badge !== null) e.badge = str(item.badge);
   if (item.via !== undefined && item.via !== null) e.via = checkVia(ctx, `${path}.via`, item.via);
   if (item.route !== undefined) e.route = checkRoute(ctx, `${path}.route`, item.route);
+  if (item.layout !== undefined) {
+    if (typeof item.layout === 'boolean') e.layout = item.layout;
+    else ctx.bad(`${path}.layout`, 'must be true or false');
+  }
   return e;
 }
 
@@ -396,8 +449,8 @@ export function parseDiagram(raw: unknown, theme: Theme): DiagramSpec {
   const ctx = new Ctx(theme);
   if (!isMap(raw)) throw new ValidationError(['document: must be a YAML map with a "nodes" key']);
   for (const k of Object.keys(raw)) {
-    if (!['title', 'subtitle', 'theme', 'direction', 'nodes', 'edges'].includes(k)) {
-      ctx.bad(k, 'unknown key. Use one of: title, subtitle, theme, direction, nodes, edges');
+    if (!['title', 'subtitle', 'theme', 'direction', 'rows', 'width', 'nodes', 'edges'].includes(k)) {
+      ctx.bad(k, 'unknown key. Use one of: title, subtitle, theme, direction, rows, width, nodes, edges');
     }
   }
   const direction = raw.direction === undefined ? 'down' : raw.direction;
@@ -413,6 +466,21 @@ export function parseDiagram(raw: unknown, theme: Theme): DiagramSpec {
   if (!isMap(raw.nodes)) ctx.bad('nodes', 'is required and must be a map of node ids to nodes');
   else for (const [id, v] of Object.entries(raw.nodes)) spec.nodes.push(parseNode(ctx, id, v, `nodes.${id}`));
   spec.edges = parseEdges(ctx, raw.edges, 'edges');
+  if (raw.width !== undefined) {
+    if (typeof raw.width === 'number' && raw.width >= 200 && raw.width <= 20000) spec.width = raw.width;
+    else ctx.bad('width', 'must be a number of px from 200 to 20000');
+  }
+  if (raw.rows !== undefined) {
+    spec.rows = checkRows(ctx, 'rows', raw.rows);
+    if (spec.rows) checkRowIds(ctx, 'rows', spec.rows, new Set(spec.nodes.map((n) => n.id)), 'a top-level node');
+  }
+  const zoneRows = (ns: NodeSpec[]) => {
+    for (const n of ns) {
+      if (n.rows) checkRowIds(ctx, `${n.path}.rows`, n.rows, new Set(n.children.map((c) => c.id)), `a child of ${n.id}`);
+      zoneRows(n.children);
+    }
+  };
+  zoneRows(spec.nodes);
   for (const e of spec.edges) {
     for (const end of [e.from, e.to]) if (!ctx.ids.has(end)) ctx.bad(e.path, `unknown node "${end}"`);
     for (const id of viaIds(e)) if (!ctx.ids.has(id)) ctx.bad(e.path, `unknown node "${id}" in via`);
@@ -445,12 +513,32 @@ export function parseApply(raw: unknown, theme: Theme): ApplySpec {
           continue;
         }
         const isEdge = ref.includes('->');
-        const allowed = isEdge ? ['label', 'kind', 'variant', 'badge', 'from', 'to', 'via', 'route'] : ['id', 'title', 'sub', 'kind', 'tone', 'icon', 'variant', 'style'];
+        const allowed =
+          ref === 'page'
+            ? ['rows', 'width']
+            : isEdge
+              ? ['label', 'kind', 'variant', 'badge', 'from', 'to', 'via', 'route', 'layout']
+              : ['id', 'title', 'sub', 'kind', 'tone', 'icon', 'variant', 'style', 'rows'];
         const f: SetFields = {};
         for (const [k, val] of Object.entries(v)) {
           const p = `${path}.${k}`;
           if (!allowed.includes(k)) {
             ctx.bad(p, `unknown field. Use one of: ${list(allowed)}`);
+            continue;
+          }
+          if (k === 'rows') {
+            f.rows = val === null ? null : (checkRows(ctx, p, val) ?? null);
+            continue;
+          }
+          if (k === 'width') {
+            if (val === null) f.width = null;
+            else if (typeof val === 'number' && val >= 200 && val <= 20000) f.width = val;
+            else ctx.bad(p, 'must be a number of px from 200 to 20000');
+            continue;
+          }
+          if (isEdge && k === 'layout') {
+            if (val === null || typeof val === 'boolean') f.layout = val;
+            else ctx.bad(p, 'must be true or false');
             continue;
           }
           if (isEdge) {
